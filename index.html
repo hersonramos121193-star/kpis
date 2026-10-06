@@ -701,18 +701,6 @@ function desdeHist(s, r) {
   };
 }
 
-// Junta el archivo nuevo con lo ya guardado: los departamentos que el archivo no trae se toman del periodo guardado.
-async function combinar(a, previo, clave) {
-  const faltan = [...secsDe(previo)].filter(id => !a.secs.has(id));
-  if (!faltan.length && sum(a.plantas, p => p.personal)) return a;
-  const viejo = desdeHist(previo, await enviar({ clave, accion: 'detalle', id_semana: previo.id_semana }));
-  const m = { ...a, secs: new Set([...a.secs, ...faltan]) };
-  const tomar = { ausentismo: ['faltas'], incapacidades: ['incap'], nomina: ['nom'], capacitacion: ['cap', 'cursosProg', 'cursosReal'], rotacion: ['rot'], bajas: ['bajas'] };
-  faltan.forEach(id => tomar[id].forEach(k => m[k] = viejo[k]));
-  if (!sum(m.plantas, p => p.personal) && sum(viejo.plantas, p => p.personal)) m.plantas = viejo.plantas;
-  return m;
-}
-
 // Muestra una semana guardada: totales del histórico + detalle (con clave) desde Google Sheets.
 async function verSemana(id, preguntar = true) {
   if (actual && resumen(actual).id_semana === id) { renderSemana(actual); $('estado').textContent = `Viendo periodo ${id} (Excel cargado).`; return; }
@@ -749,48 +737,73 @@ const tablasDe = (d, s) => ({
   Bajas: d.bajas.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
 });
 
-// Periodo distinto al del archivo: se toma lo guardado y se le AGREGAN los registros (sin duplicar).
-async function agregarAPeriodo(id, o, clave) {
-  const previo = hist.semanal.find(r => r.id_semana === id), per = o.periodo;
-  const base = previo ? desdeHist(previo, await enviar({ clave, accion: 'detalle', id_semana: id }))
-    : { anio: per.anio, semana: per.n, del: per.del, al: per.al, secs: new Set(), faltas: [], incap: [], nom: [], bajas: [], cap: [], cursosProg: 0, cursosReal: 0, rot: [],
-        plantas: actual.plantas.map(x => ({ planta: x.planta, personal: 0 })) };
-  const m = { ...base, secs: new Set(base.secs) };
-  for (const campo of Object.keys(SEC_DE)) if (o[campo].length) { m[campo] = agregar(m[campo], o[campo], CLAVE_REG[campo]); m.secs.add(SEC_DE[campo]); }
+// ---------- Guardar ----------
+// Cada registro guarda `origen` = periodo del archivo que lo trajo (sin origen = su propio periodo).
+// Al subir un archivo: en TODOS los periodos se quita lo que ese archivo había traído (de los departamentos en "Sí")
+// y se pone lo nuevo. Así, si una fecha se corrige, el registro se mueve y no queda duplicado.
+// secciones_propias = departamentos que reportó el archivo de ese mismo periodo; origenes = otros archivos que le aportaron.
+const listaDe = v => String(v ?? '').split(',').filter(Boolean);
+const propiasDe = r => new Set(listaDe(r.secciones_propias || (r.origenes ? '' : r.secciones || SECS_ANTES)));
+const origenDe = (r, id) => r.origen || id;
+
+function vacioDe(per) {
+  return { anio: per.anio, semana: per.n, del: per.del, al: per.al, secs: new Set(), faltas: [], incap: [], nom: [], bajas: [],
+    cap: [], cursosProg: 0, cursosReal: 0, rot: [], plantas: actual.plantas.map(x => ({ planta: x.planta, personal: 0 })) };
+}
+
+async function guardarPeriodo(id, F, grupo, clave) {
+  const previo = hist.semanal.find(r => r.id_semana === id);
+  const m = previo ? desdeHist(previo, await enviar({ clave, accion: 'detalle', id_semana: id })) : vacioDe(grupo.periodo);
+  const propias = previo ? propiasDe(previo) : new Set();
+  if (id === F) { // periodo del archivo: departamentos sin fecha, personal y "Sí" propios
+    if (actual.secs.has('capacitacion')) Object.assign(m, { cap: actual.cap, cursosProg: actual.cursosProg, cursosReal: actual.cursosReal });
+    if (actual.secs.has('rotacion')) m.rot = actual.rot;
+    if (sum(actual.plantas, x => x.personal)) m.plantas = actual.plantas;
+    actual.secs.forEach(x => propias.add(x));
+  }
+  for (const campo of Object.keys(SEC_DE)) if (actual.secs.has(SEC_DE[campo])) {
+    const nuevos = (grupo?.[campo] || []).map(r => ({ ...r, origen: F }));
+    m[campo] = agregar(m[campo].filter(r => origenDe(r, id) !== F), nuevos, CLAVE_REG[campo]);
+  }
+  const conDatos = Object.keys(SEC_DE).filter(c => m[c].length).map(c => SEC_DE[c]);
+  m.secs = new Set([...propias, ...conDatos]);
+  if (!m.secs.size) return enviar({ clave, id_semana: id, tablas: {} }); // ya no le queda nada: se borra el periodo
   const s = resumen(m);
+  const origenes = new Set(Object.keys(SEC_DE).flatMap(c => m[c].map(r => origenDe(r, id))).filter(o => o !== id));
+  Object.assign(s, { secciones_propias: [...propias].join(','), origenes: [...origenes].join(',') });
   await enviar({ clave, id_semana: id, tablas: tablasDe(m, s) });
+  if (id === F) actual = Object.assign(m, { periodo: actual.periodo, errores: actual.errores, otros: {} });
 }
 
 async function guardar() {
-  let s = resumen(actual);
-  const previo = hist.semanal.find(r => r.id_semana === s.id_semana), existe = !!previo;
-  const otros = Object.entries(actual.otros || {});
+  const s = resumen(actual), F = s.id_semana;
   if (actual.errores.length) return alert('No se puede guardar: el archivo tiene errores.\n\n' + actual.errores.join('\n'));
+  const grupos = { [F]: { periodo: actual.periodo, faltas: actual.faltas, incap: actual.incap, nom: actual.nom, bajas: actual.bajas }, ...(actual.otros || {}) };
+  // Periodos donde este archivo dejó registros la vez pasada (para quitarlos si ya no van ahí)
+  const antes = hist.semanal.filter(r => r.id_semana !== F && listaDe(r.origenes).includes(F) && !grupos[r.id_semana]).map(r => r.id_semana);
+  const existe = hist.semanal.some(r => r.id_semana === F);
   if (!confirm(`¿Guardar el periodo ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
     `\n\nDepartamentos en este archivo: ${[...actual.secs].map(id => SECCIONES[id]).join(', ') || 'ninguno'}.` +
-    (existe ? '\nEse periodo ya existe: se reemplazan esos departamentos y se conservan los demás.' : '') +
-    (otros.length ? `\n\nTambién se AGREGAN a otros periodos (sin borrar lo que ya tienen):\n${resumenOtros(actual.otros).join('\n')}` : ''))) return;
+    (existe ? '\nEse periodo ya existe: se reemplaza lo que trae este archivo y se conserva lo demás.' : '') +
+    (Object.keys(actual.otros || {}).length ? `\n\nTambién van a otros periodos (sin borrar lo que ya tienen):\n${resumenOtros(actual.otros).join('\n')}` : '') +
+    (antes.length ? `\n\nSe quitan registros que este archivo había puesto antes en: ${antes.map(id => 'P' + Number(id.slice(-2))).join(', ')}.` : ''))) return;
   const clave = pedirClave(true);
   if (!clave) return;
-  try {
-    if (previo) { actual = await combinar(actual, previo, clave); s = resumen(actual); renderSemana(actual); }
-  } catch (e) { return alert('No pude leer lo ya guardado de ese periodo, no se guardó nada: ' + e.message); }
-  $('estado').textContent = 'Guardando en Google Sheets…';
+  const ids = [F, ...Object.keys(grupos).filter(id => id !== F).sort(), ...antes];
   const hechos = [], fallas = [];
-  try {
-    await enviar({ clave, id_semana: s.id_semana, tablas: tablasDe(actual, s) });
-    hechos.push(`P${s.semana}`);
-  } catch (e) { $('estado').textContent = 'No se guardó: ' + e.message; return alert('No se guardó: ' + e.message); }
-  for (const [id, o] of otros) {
-    $('estado').textContent = `Agregando registros al periodo ${o.periodo.n}…`;
-    try { await agregarAPeriodo(id, o, clave); hechos.push(`P${o.periodo.n}`); }
-    catch (e) { fallas.push(`P${o.periodo.n}: ${e.message}`); }
+  for (const id of ids) {
+    $('estado').textContent = `Guardando periodo ${Number(id.slice(-2))}… (${hechos.length + fallas.length + 1} de ${ids.length})`;
+    try { await guardarPeriodo(id, F, grupos[id], clave); hechos.push('P' + Number(id.slice(-2))); }
+    catch (e) {
+      fallas.push(`P${Number(id.slice(-2))}: ${e.message}`);
+      if (id === F) break; // si falla el periodo principal no se toca nada más
+    }
   }
-  actual.otros = {};
   await cargarHist();
-  $('estado').textContent = `Guardado: ${hechos.join(', ')}.` + (fallas.length ? ` Falló: ${fallas.join('; ')} (vuelve a cargar el archivo para reintentar).` : '');
-  if (fallas.length) alert('Algunos periodos no se guardaron:\n' + fallas.join('\n'));
   renderSemana(actual);
+  $('estado').textContent = (hechos.length ? `Guardado: ${hechos.join(', ')}.` : '') +
+    (fallas.length ? ` No se guardó: ${fallas.join('; ')}. Vuelve a cargar el archivo para reintentar.` : '');
+  if (fallas.length) alert('Algunos periodos no se guardaron:\n' + fallas.join('\n'));
 }
 
 // ---------- Exportar la semana en pantalla a Excel ----------

@@ -91,7 +91,7 @@ details summary { cursor: pointer; font-weight: 600; }
   <div id="drop">Arrastra aquí <b>KPIs_RH_Semanal.xlsx</b> o usa “Cargar Excel”.<br>
     <small>El Excel se procesa en tu navegador. Al guardar, solo se envía a tu Google Sheet.</small></div>
 
-  <section class="grid kpis" id="kpis"></section>
+  <section class="grid kpis"><div id="kpis" style="display:contents"></div><div id="kpisRot" style="display:contents"></div></section>
 
   <div id="semana" hidden>
     <section class="grid charts">
@@ -115,7 +115,6 @@ details summary { cursor: pointer; font-weight: 600; }
 
   <div id="rotacion" hidden>
     <h3 id="rotTitulo">Rotación de personal</h3>
-    <section class="grid kpis" id="kpisRot"></section>
     <section class="grid charts">
       <div class="card"><h2>% Rotación por tipo de salida</h2><div class="chart"><canvas id="rTasa"></canvas></div></div>
       <div class="card"><h2>Bajas por antigüedad</h2><div class="chart"><canvas id="rAntig"></canvas></div></div>
@@ -304,7 +303,7 @@ function renderKpis(s, prev) {
 // ---------- Rotación (cifras anuales; se guardan con cada semana) ----------
 function renderRot(R) {
   $('rotacion').hidden = !R.length;
-  if (!R.length) return;
+  if (!R.length) { $('kpisRot').innerHTML = ''; return; }
   const de = t => R.filter(r => r.tabla === t).map(r => ({ ...r, anio: Number(r.anio), valor: Number(r.valor) || 0 }));
   const tasas = de('tasa'), anios = [...new Set(tasas.map(r => r.anio))].sort();
   const a = anios.at(-1), a0 = anios.at(-2);
@@ -491,7 +490,7 @@ async function guardar() {
 }
 
 async function load(buf) {
-  try { actual = parse(XLSX.read(buf, { cellDates: true })); renderSemana(actual); }
+  try { actual = parse(XLSX.read(buf, { cellDates: true })); renderSemana(actual); $('estado').textContent = `Viendo semana ${resumen(actual).id_semana} (Excel cargado).`; }
   catch (e) { alert('No pude leer el archivo: ' + e.message); console.error(e); return; }
   if (SHEETS_URL) { renderHist(); $('guardar').hidden = false; guardar(); }
 }

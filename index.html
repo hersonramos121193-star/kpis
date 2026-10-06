@@ -82,6 +82,7 @@ details summary { cursor: pointer; font-weight: 600; }
   <div class="btns">
     <label class="btn">Cargar Excel<input type="file" id="file" accept=".xlsx,.xls"></label>
     <select class="btn" id="sel" hidden aria-label="Semana a mostrar"></select>
+    <button class="btn" id="exportar" hidden>Exportar a Excel</button>
     <button class="btn" id="guardar" hidden>Guardar semana en Google Sheets</button>
   </div>
 </div></div>
@@ -285,18 +286,20 @@ function deltaHtml(dlt, esPct, subirEsBueno, vs) {
   return `<div class="delta ${(dlt > 0) === subirEsBueno ? 'ok' : 'pend'}">${dlt > 0 ? '▲' : '▼'} ${txt} vs ${vs}</div>`;
 }
 
+// [título, campo, es %, subir es bueno, detalle]
+const KPIS = [
+  ['Ausentismo semanal', 'ausentismo', true, false, s => `${s.faltas} faltas / ${s.personal} personas`],
+  ['Faltas injustificadas', 'injustificadas', false, false, s => `${s.justificadas} justificadas · ${s.disciplina} disciplina`],
+  ['Incapacidades', 'incapacidades', false, false, s => `${s.dias_incapacidad} días en la semana`],
+  ['Riesgos de trabajo', 'riesgos_trabajo', false, false, s => `+ ${s.riesgos_trayecto} de trayecto`],
+  ['Incidencias de nómina', 'incidencias_nomina', false, false, s => `${s.incidencias_pendientes} pendientes`],
+  ['Avance capacitación', 'avance_capacitacion', true, true, s => `${s.cursos_realizados} de ${s.cursos_programados} cursos`],
+  ['Asistencia capacitación', 'asistencia_capacitacion', true, true, s => `${s.cap_asistieron} de ${s.cap_programados} programados`],
+];
+
 function renderKpis(s, prev) {
   $('periodo').textContent = `Semana ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)} · ${s.personal} personas en planta`;
-  const k = [
-    ['Ausentismo semanal', 'ausentismo', true, false, `${s.faltas} faltas / ${s.personal} personas`],
-    ['Faltas injustificadas', 'injustificadas', false, false, `${s.justificadas} justificadas · ${s.disciplina} disciplina`],
-    ['Incapacidades', 'incapacidades', false, false, `${s.dias_incapacidad} días en la semana`],
-    ['Riesgos de trabajo', 'riesgos_trabajo', false, false, `+ ${s.riesgos_trayecto} de trayecto`],
-    ['Incidencias de nómina', 'incidencias_nomina', false, false, `${s.incidencias_pendientes} pendientes`],
-    ['Avance capacitación', 'avance_capacitacion', true, true, `${s.cursos_realizados} de ${s.cursos_programados} cursos`],
-    ['Asistencia capacitación', 'asistencia_capacitacion', true, true, `${s.cap_asistieron} de ${s.cap_programados} programados`],
-  ];
-  $('kpis').innerHTML = k.map(([t, f, esPct, subirEsBueno, sub]) => tile(t, esPct ? pct(s[f]) : s[f], sub,
+  $('kpis').innerHTML = KPIS.map(([t, f, esPct, subirEsBueno, sub]) => tile(t, esPct ? pct(s[f]) : s[f], sub(s),
     prev && prev[f] !== '' && prev[f] != null ? deltaHtml(Number(s[f]) - Number(prev[f]), esPct, subirEsBueno, `S${prev.semana}`) : '')).join('');
 }
 
@@ -378,7 +381,7 @@ function renderSemana(d) {
   tbl('tFaltas', ['Fecha', 'Ficha', 'Nombre', 'Planta', 'Motivo', 'Supervisor', 'Notas'],
     d.faltas.map(f => [esc(f.fecha_falta), esc(f.numero_empleado), esc(f.nombre), esc(f.planta), titulo(f.motivo), esc(f.supervisor), esc(f.notas)]));
 
-  $('drop').hidden = true; $('semana').hidden = false;
+  $('drop').hidden = true; $('semana').hidden = false; $('exportar').hidden = false;
 }
 
 // ---------- Histórico (Google Sheets) ----------
@@ -463,7 +466,12 @@ async function verSemana(id, preguntar = true) {
       cursosProg: Number(s.cursos_programados) || 0, cursosReal: Number(s.cursos_realizados) || 0, rot,
     });
     $('estado').textContent = `Viendo semana ${id} (desde Google Sheets).`;
-  } catch (e) { $('semana').hidden = true; $('estado').textContent = 'No pude cargar el detalle: ' + e.message; }
+  } catch (e) {
+    $('semana').hidden = true;
+    $('estado').textContent = e instanceof TypeError // falla de red/CORS: casi siempre el Apps Script publicado es una versión vieja
+      ? 'No pude cargar el detalle. Revisa que el Apps Script esté implementado con la versión más reciente de Codigo.gs.'
+      : 'No pude cargar el detalle: ' + e.message;
+  }
 }
 
 async function guardar() {
@@ -489,6 +497,73 @@ async function guardar() {
   } catch (e) { $('estado').textContent = 'No se guardó: ' + e.message; alert('No se guardó: ' + e.message); }
 }
 
+// ---------- Exportar la semana en pantalla a Excel ----------
+const P = x => ({ t: 'n', v: Number(x) || 0, z: '0.0%' });
+// Fecha como número de serie de Excel (evita que la zona horaria la recorra un día).
+const F = v => {
+  const t = String(iso(v) ?? '').slice(0, 10);
+  if (!/^\d{4}-\d\d-\d\d$/.test(t)) return v ?? '';
+  const [y, m, d] = t.split('-').map(Number);
+  return { t: 'n', v: (Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)) / 864e5, z: 'dd/mm/yyyy' };
+};
+function hoja(aoa) {
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const n = Math.max(...aoa.map(r => r.length));
+  ws['!cols'] = Array.from({ length: n }, (_, c) => ({
+    wch: Math.min(50, 2 + Math.max(8, ...aoa.slice(c ? 0 : 4).map(r => r[c]?.z === 'dd/mm/yyyy' ? 10 : String(r[c]?.v ?? r[c] ?? '').length))),
+  }));
+  return ws;
+}
+
+function exportar() {
+  if (!vista || $('semana').hidden) return alert('Para exportar esta semana, elígela en la lista y escribe la clave para cargar su detalle.');
+  const d = vista, s = resumen(d), prev = anterior(s.id_semana), wb = XLSX.utils.book_new();
+  const add = (nombre, aoa) => XLSX.utils.book_append_sheet(wb, hoja(aoa), nombre);
+  const val = (v, esPct) => v === '' || v == null ? '' : esPct ? P(v) : Number(v);
+
+  add('Resumen', [
+    ['KPIs Recursos Humanos'],
+    [`Semana ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)}`],
+    [`Personal en planta: ${s.personal}`],
+    [],
+    ['Indicador', `Semana ${s.semana}`, ...(prev ? [`Semana ${prev.semana}`, 'Cambio'] : []), 'Detalle'],
+    ...KPIS.map(([t, f, esPct, , sub]) => [t, val(s[f], esPct),
+      ...(prev ? [val(prev[f], esPct), val(Number(s[f]) - Number(prev[f]), esPct)] : []), sub(s)]),
+  ]);
+  add('Plantas', [
+    ['Planta', 'Personal', 'Faltas', 'Injustificadas', 'Justificadas', 'Disciplina', '% Ausentismo', 'Incapacidades', 'Días incapacidad', 'Cap. programados', 'Cap. asistieron'],
+    ...porPlanta(d, s).map(p => [p.planta, p.personal, p.faltas, p.injustificadas, p.justificadas, p.disciplina, P(p.ausentismo), p.incapacidades, p.dias_incapacidad, p.cap_programados, p.cap_asistieron]),
+  ]);
+  add('Faltas', [
+    ['Fecha', 'Ficha', 'Nombre', 'Planta', 'Motivo', 'Supervisor', 'Notas'],
+    ...d.faltas.map(f => [F(f.fecha_falta), f.numero_empleado, f.nombre, f.planta, titulo(f.motivo), f.supervisor, f.notas]),
+  ]);
+  add('Incapacidades', [
+    ['Ficha', 'Nombre', 'Planta', 'Tipo', 'Días en la semana', 'Inicial', 'Final', 'Probable alta', 'Días acumulados', 'Diagnóstico'],
+    ...d.incap.map(i => [i.ficha, i.nombre, i.planta, titulo(i.tipo_de_incapacidad), i.dias_en_la_semana, F(i.inicial), F(i.final), F(i.probable_alta), i.dias_acumulados, i.diagnostico]),
+  ]);
+  add('Incidencias nómina', [
+    ['Fecha', 'Ficha', 'Reportado por', 'Puesto', 'Área', 'Tipo', 'Descripción', 'Estatus', 'Fecha de solución', 'Días para resolver'],
+    ...d.nom.map(n => [F(n.fecha), n.ficha, n.reportado_por, n.puesto, n.area, n.tipo_de_incidencia, n.descripcion, n.estatus, F(n.fecha_de_solucion), n.dias_para_resolver]),
+  ]);
+
+  const R = d.rot || [];
+  if (R.length) {
+    const de = t => R.filter(r => r.tabla === t);
+    const anios = [...new Set(de('tasa').map(r => Number(r.anio)))].sort();
+    const aoa = [['Tipo de salida', ...anios.map(String)],
+      ...[...new Set(de('tasa').map(r => r.concepto))].map(t => [t, ...anios.map(a => P(de('tasa').find(r => r.concepto === t && Number(r.anio) === a)?.valor))])];
+    for (const [t, enc] of [['antiguedad', 'Rango de antigüedad'], ['motivo', 'Motivo de baja'], ['puesto', 'Tipo de puesto']]) {
+      const tot = sum(de(t), r => r.valor);
+      aoa.push([], [enc, 'Bajas', '% del total'], ...de(t).map(r => [r.concepto, Number(r.valor), P(tot ? r.valor / tot : 0)]), ['Total', tot]);
+    }
+    const dias = Number(de('promedio_dias')[0]?.valor);
+    if (dias) aoa.push([], ['Antigüedad promedio al momento de la baja (días)', dias], ['Antigüedad promedio (años)', +(dias / 365).toFixed(1)]);
+    add('Rotación', aoa);
+  }
+  XLSX.writeFile(wb, `KPIs_RH_${s.id_semana}.xlsx`);
+}
+
 async function load(buf) {
   try { actual = parse(XLSX.read(buf, { cellDates: true })); renderSemana(actual); $('estado').textContent = `Viendo semana ${resumen(actual).id_semana} (Excel cargado).`; }
   catch (e) { alert('No pude leer el archivo: ' + e.message); console.error(e); return; }
@@ -498,6 +573,7 @@ async function load(buf) {
 $('sel').onchange = e => verSemana(e.target.value);
 $('file').onchange = e => { e.target.files[0]?.arrayBuffer().then(load); e.target.value = ''; };
 $('guardar').onclick = guardar;
+$('exportar').onclick = exportar;
 ['dragover', 'dragleave', 'drop'].forEach(t => document.addEventListener(t, e => {
   e.preventDefault();
   $('drop').classList.toggle('over', t === 'dragover');

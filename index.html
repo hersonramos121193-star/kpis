@@ -83,7 +83,7 @@ details summary { cursor: pointer; font-weight: 600; }
     <label class="btn">Cargar Excel<input type="file" id="file" accept=".xlsx,.xls"></label>
     <select class="btn" id="sel" hidden aria-label="Semana a mostrar"></select>
     <button class="btn" id="exportar" hidden>Exportar a Excel</button>
-    <button class="btn" id="guardar" hidden>Guardar semana en Google Sheets</button>
+    <button class="btn" id="guardar" hidden>Guardar periodo en Google Sheets</button>
   </div>
 </div></div>
 <div class="franja"></div>
@@ -445,6 +445,8 @@ function renderSemana(d) {
   $('aviso').innerHTML = (d.errores || []).map(e => '⚠ ' + esc(e)).join('<br>');
   const secs = d.secs || secsDe(null);
   document.querySelectorAll('#semana [data-sec]').forEach(el => el.hidden = !secs.has(el.dataset.sec));
+  // Bloques que quedaron sin tarjetas visibles se ocultan para no dejar huecos.
+  document.querySelectorAll('#semana > section').forEach(sec => sec.hidden = ![...sec.children].some(c => !c.hidden));
   renderBajas(d.bajas || []);
 
   const P = d.plantas.map(p => p.planta);
@@ -505,6 +507,7 @@ function renderBajas(B) {
   mk('bAntig', 'bar', etiquetas, [{ label: 'Bajas', color: '--navy', data: etiquetas.map(e => ra[e] || 0) }], { tot });
   const ca = orden(count(B.filter(b => b.causa), b => String(b.causa).trim()));
   mk('bCausa', 'bar', ca.map(x => x[0]), [{ label: 'Bajas', color: '--teal', data: ca.map(x => x[1]) }], { horizontal: true, tot });
+  $('bCausa').closest('.card').hidden = !ca.length; // solo renuncias/abandonos traen causa
   tbl('tBajas', ['Fecha de baja', 'Ficha', 'Nombre', 'Puesto', 'Tipo', 'Planta', 'Antigüedad', 'Clasificación', 'Motivo', 'Causa'],
     [...B].sort((a, b) => a.fecha_de_baja.localeCompare(b.fecha_de_baja)).map(b => [fdate(b.fecha_de_baja), esc(sinDato(b.ficha)), esc(b.nombre),
       esc(sinDato(b.puesto)), esc(sinDato(b.tipo_de_empleado)), esc(sinDato(b.planta)), antigTxt(diasAntig(b)), titulo(b.clasificacion), titulo(b.motivo), esc(b.causa ?? '')]));

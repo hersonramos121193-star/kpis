@@ -96,22 +96,31 @@ details summary { cursor: pointer; font-weight: 600; }
 
   <div id="semana" hidden>
     <section class="grid charts">
-      <div class="card"><h2>Faltas por planta y motivo</h2><div class="chart"><canvas id="cPlanta"></canvas></div></div>
-      <div class="card"><h2>% Ausentismo por planta</h2><div class="chart"><canvas id="cAus"></canvas></div></div>
-      <div class="card"><h2>Faltas por día</h2><div class="chart"><canvas id="cDia"></canvas></div></div>
-      <div class="card"><h2>Días de incapacidad por tipo</h2><div class="chart"><canvas id="cIncap"></canvas></div></div>
-      <div class="card"><h2>Incidencias de nómina por tipo</h2><div class="chart"><canvas id="cNom"></canvas></div></div>
-      <div class="card"><h2>Asistencia a capacitación por planta</h2><div class="chart"><canvas id="cCap"></canvas></div></div>
+      <div class="card" data-sec="ausentismo"><h2>Faltas por planta y motivo</h2><div class="chart"><canvas id="cPlanta"></canvas></div></div>
+      <div class="card" data-sec="ausentismo"><h2>% Ausentismo por planta</h2><div class="chart"><canvas id="cAus"></canvas></div></div>
+      <div class="card" data-sec="ausentismo"><h2>Faltas por día</h2><div class="chart"><canvas id="cDia"></canvas></div></div>
+      <div class="card" data-sec="incapacidades"><h2>Días de incapacidad por tipo</h2><div class="chart"><canvas id="cIncap"></canvas></div></div>
+      <div class="card" data-sec="nomina"><h2>Incidencias de nómina por tipo</h2><div class="chart"><canvas id="cNom"></canvas></div></div>
+      <div class="card" data-sec="capacitacion"><h2>Asistencia a capacitación por planta</h2><div class="chart"><canvas id="cCap"></canvas></div></div>
     </section>
     <section class="grid charts">
-      <div class="card scroll"><h2>Reincidentes (2+ faltas en la semana)</h2><table id="tReinc"></table></div>
-      <div class="card scroll"><h2>Faltas por supervisor</h2><table id="tSup"></table></div>
+      <div class="card scroll" data-sec="ausentismo"><h2>Reincidentes (2+ faltas en la semana)</h2><table id="tReinc"></table></div>
+      <div class="card scroll" data-sec="ausentismo"><h2>Faltas por supervisor</h2><table id="tSup"></table></div>
     </section>
     <section class="grid">
-      <div class="card scroll"><h2>Incapacidades activas</h2><table id="tIncap"></table></div>
-      <div class="card scroll"><h2>Incidencias de nómina</h2><table id="tNom"></table></div>
-      <div class="card scroll"><details><summary>Detalle de faltas</summary><table id="tFaltas"></table></details></div>
+      <div class="card scroll" data-sec="incapacidades"><h2>Incapacidades activas</h2><table id="tIncap"></table></div>
+      <div class="card scroll" data-sec="nomina"><h2>Incidencias de nómina</h2><table id="tNom"></table></div>
+      <div class="card scroll" data-sec="ausentismo"><details><summary>Detalle de faltas</summary><table id="tFaltas"></table></details></div>
     </section>
+
+    <h3 data-sec="bajas">Bajas del periodo</h3>
+    <section class="grid charts" data-sec="bajas">
+      <div class="card"><h2>Bajas por motivo</h2><div class="chart"><canvas id="bMotivo"></canvas></div></div>
+      <div class="card"><h2>Bajas por planta</h2><div class="chart"><canvas id="bPlanta"></canvas></div></div>
+      <div class="card"><h2>Antigüedad al momento de la baja</h2><div class="chart"><canvas id="bAntig"></canvas></div></div>
+      <div class="card"><h2>Causas de la baja</h2><div class="chart"><canvas id="bCausa"></canvas></div></div>
+    </section>
+    <div class="card scroll" data-sec="bajas"><h2>Detalle de bajas</h2><table id="tBajas"></table></div>
   </div>
 
   <div id="rotacion" hidden>
@@ -132,8 +141,9 @@ details summary { cursor: pointer; font-weight: 600; }
       <div class="card"><h2>Días de incapacidad</h2><div class="chart"><canvas id="hIncap"></canvas></div></div>
       <div class="card"><h2>Incidencias de nómina</h2><div class="chart"><canvas id="hNom"></canvas></div></div>
       <div class="card"><h2>Capacitación</h2><div class="chart"><canvas id="hCap"></canvas></div></div>
+      <div class="card"><h2>Bajas por periodo</h2><div class="chart"><canvas id="hBajas"></canvas></div></div>
     </section>
-    <div class="card scroll"><h2>Semanas guardadas</h2><table id="tHist"></table></div>
+    <div class="card scroll"><h2>Periodos guardados</h2><table id="tHist"></table></div>
   </div>
 </main>
 
@@ -160,15 +170,33 @@ const store = { get: k => { try { return localStorage.getItem(k); } catch { retu
 const MOTIVOS = ['JUSTIFICADA', 'INJUSTIFICADA', 'DISCIPLINA'];
 const COLOR_MOTIVO = { JUSTIFICADA: '--gris', INJUSTIFICADA: '--navy', DISCIPLINA: '--teal' };
 const CAMPO_MOTIVO = { JUSTIFICADA: 'justificadas', INJUSTIFICADA: 'injustificadas', DISCIPLINA: 'disciplina' };
-const COLOR_PLANTA =['--navy', '--gris', '--teal']; // ponytail: 3 colores de marca; una 4a planta sale en gris tenue
+const COLOR_PLANTA = ['--navy', '--gris', '--teal']; // ponytail: 3 colores de marca; una 4a planta sale en gris tenue
+
+// Departamentos (secciones). Un archivo dice en Config cuáles trae; lo que no traiga se conserva de lo ya guardado.
+const SECCIONES = { ausentismo: 'Ausentismo', incapacidades: 'Incapacidades', nomina: 'Incidencias de nómina', capacitacion: 'Capacitación', rotacion: 'Rotación', bajas: 'Bajas' };
+const SECS_ANTES = 'ausentismo,incapacidades,nomina,capacitacion,rotacion'; // periodos guardados antes de existir "secciones"
+const secsDe = r => new Set(String(r?.secciones ?? SECS_ANTES).split(',').filter(Boolean));
+const secId = nombre => Object.keys(SECCIONES).find(id => key(SECCIONES[id]) === key(nombre));
+// Campos del resumen que pertenecen a cada sección (quedan vacíos si la sección no se reportó).
+const CAMPOS = {
+  ausentismo: ['faltas', 'injustificadas', 'justificadas', 'disciplina', 'ausentismo'],
+  incapacidades: ['incapacidades', 'dias_incapacidad', 'riesgos_trabajo', 'riesgos_trayecto'],
+  nomina: ['incidencias_nomina', 'incidencias_pendientes'],
+  capacitacion: ['cursos_programados', 'cursos_realizados', 'avance_capacitacion', 'cap_programados', 'cap_asistieron', 'asistencia_capacitacion'],
+  bajas: ['bajas', 'bajas_voluntarias', 'bajas_forzadas'],
+};
+const vaciar = (o, secs) => { for (const [sec, cs] of Object.entries(CAMPOS)) if (!secs.has(sec)) cs.forEach(c => { if (c in o) o[c] = ''; }); return o; };
+const num = v => v === '' || v == null ? null : Number(v);
+const ymd = v => String(iso(v) ?? '').slice(0, 10);
 
 // Tabla de una hoja: busca la fila cuyo primer valor es `first`, lee hasta la primera fila con columna A vacía.
+// Si no existe la hoja o la tabla, regresa vacío con falta: true.
 function table(wb, sheet, first) {
   const ws = wb.Sheets[sheet];
-  if (!ws) throw new Error(`Falta la hoja "${sheet}"`);
+  if (!ws) return { rows: [], out: [], falta: true };
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: true });
   const i = rows.findIndex(r => key(r[0]) === key(first));
-  if (i < 0) throw new Error(`No encontré la tabla "${first}" en "${sheet}"`);
+  if (i < 0) return { rows, out: [], falta: true };
   const h = rows[i].map(key), out = [];
   for (const r of rows.slice(i + 1)) {
     if (r[0] === null || r[0] === '') break;
@@ -207,26 +235,43 @@ function validar(d) {
   if (d.semana !== p.n) err.push(`En Config dice semana ${d.semana || '(vacía)'}, pero el ${fd(del)} pertenece al periodo ${p.n} de ${p.anio}.`);
   if (del !== p.del) err.push(`"Del" debe ser ${fd(p.del)} (inicio del periodo ${p.n}).`);
   if (al !== p.al) err.push(`"Al" debe ser ${fd(p.al)} (fin del periodo ${p.n}); en Config dice ${fd(al) || 'vacío'}.`);
-  const fuera = d.faltas.filter(f => f.fecha_falta < p.del || f.fecha_falta > p.al);
-  if (fuera.length) err.push(`${fuera.length} falta(s) con fecha fuera del periodo: ${[...new Set(fuera.map(f => fd(f.fecha_falta)))].join(', ')}.`);
+  const fuera = (lista, campo, que) => {
+    const f = lista.filter(x => x[campo] < p.del || x[campo] > p.al);
+    if (f.length) err.push(`${f.length} ${que} con fecha fuera del periodo: ${[...new Set(f.map(x => fd(x[campo])))].join(', ')}.`);
+  };
+  fuera(d.faltas, 'fecha_falta', 'falta(s)');
+  fuera(d.bajas, 'fecha_de_baja', 'baja(s)');
+  if (!d.secs.size) err.push('En la hoja Config no está marcado ningún departamento con "Sí".');
   return err;
 }
 
 function parse(wb) {
+  if (!wb.Sheets.Config) throw new Error('Falta la hoja "Config"');
   const cfg = table(wb, 'Config', 'Planta');
   const cap = table(wb, 'Capacitacion', 'Planta');
+  const rot = parseRot(wb);
+  // Departamentos incluidos: tabla "Departamento | ¿Incluido?" en Config; archivos viejos = las hojas que traiga.
+  const dep = table(wb, 'Config', 'Departamento');
+  const secs = new Set(dep.falta
+    ? ['ausentismo', 'incapacidades', 'nomina', 'capacitacion'].concat(rot.length ? ['rotacion'] : [], wb.Sheets.Bajas ? ['bajas'] : [])
+    : dep.out.filter(r => /^s/i.test(String(Object.values(r)[1] ?? '').trim())).map(r => secId(r.departamento)).filter(Boolean));
+  const si = (sec, v, vacio = []) => secs.has(sec) ? v : vacio;
   return {
+    secs,
     semana: Number(cell(cfg.rows, 'Semana')), del: cell(cfg.rows, 'Del'), al: cell(cfg.rows, 'Al'),
     plantas: cfg.out.map(r => ({ planta: up(r.planta), personal: Number(r.personal_en_planta) || 0 })),
-    faltas: table(wb, 'Ausentismo', 'Numero_Empleado').out.map(r => ({ ...r, fecha_falta: String(iso(r.fecha_falta)).slice(0, 10), planta: up(r.planta), motivo: up(r.motivo) })),
-    incap: table(wb, 'Incapacidades', 'Ficha').out.map(r => ({ ...r, planta: up(r.planta), tipo_de_incapacidad: up(r.tipo_de_incapacidad) })),
-    nom: table(wb, 'Incidencias_Nomina', 'Fecha').out,
-    cap: cap.out.map(r => ({ planta: up(r.planta), prog: Number(r.programados) || 0, asis: Number(r.asistieron) || 0 })),
-    cursosProg: Number(cell(cap.rows, 'Cursos programados')) || 0,
-    cursosReal: Number(cell(cap.rows, 'Cursos realizados')) || 0,
-    rot: parseRot(wb),
+    faltas: si('ausentismo', table(wb, 'Ausentismo', 'Numero_Empleado').out.map(r => ({ ...r, fecha_falta: ymd(r.fecha_falta), planta: up(r.planta), motivo: up(r.motivo) }))),
+    incap: si('incapacidades', table(wb, 'Incapacidades', 'Ficha').out.map(r => ({ ...r, planta: up(r.planta), tipo_de_incapacidad: up(r.tipo_de_incapacidad) }))),
+    nom: si('nomina', table(wb, 'Incidencias_Nomina', 'Fecha').out),
+    cap: si('capacitacion', cap.out.map(r => ({ planta: up(r.planta), prog: Number(r.programados) || 0, asis: Number(r.asistieron) || 0 }))),
+    cursosProg: si('capacitacion', Number(cell(cap.rows, 'Cursos programados')) || 0, 0),
+    cursosReal: si('capacitacion', Number(cell(cap.rows, 'Cursos realizados')) || 0, 0),
+    rot: si('rotacion', rot),
+    bajas: si('bajas', table(wb, 'Bajas', 'Fecha de baja').out.map(normBaja)),
   };
 }
+const normBaja = r => ({ ...r, fecha_de_alta: ymd(r.fecha_de_alta), fecha_de_baja: ymd(r.fecha_de_baja),
+  planta: up(r.planta), clasificacion: up(r.clasificacion), motivo: up(r.motivo) });
 
 // Hoja Rotacion (opcional) en formato largo: { tabla, concepto, anio, valor }.
 function parseRot(wb) {
@@ -250,29 +295,39 @@ function resumen(d) {
   const mot = count(d.faltas, f => f.motivo), tipo = count(d.incap, i => i.tipo_de_incapacidad);
   const capProg = sum(d.cap, c => c.prog), capAsis = sum(d.cap, c => c.asis);
   const anio = d.anio ?? d.periodo?.anio ?? (d.del instanceof Date ? d.del.getFullYear() : Number(String(d.faltas[0]?.fecha_falta).slice(0, 4)) || new Date().getFullYear());
-  return {
+  const bajas = d.bajas || [], secs = d.secs || secsDe(null);
+  return vaciar({
     id_semana: `${anio}-S${String(d.semana).padStart(2, '0')}`, anio, semana: d.semana, del: iso(d.del), al: iso(d.al),
     personal, faltas: d.faltas.length,
     injustificadas: mot.INJUSTIFICADA || 0, justificadas: mot.JUSTIFICADA || 0, disciplina: mot.DISCIPLINA || 0,
-    ausentismo: personal ? d.faltas.length / personal : 0,
+    ausentismo: personal ? d.faltas.length / personal : '',
     incapacidades: d.incap.length, dias_incapacidad: sum(d.incap, i => i.dias_en_la_semana),
     riesgos_trabajo: tipo['RIESGO DE TRABAJO'] || 0, riesgos_trayecto: tipo['RIESGO DE TRAYECTO'] || 0,
     incidencias_nomina: d.nom.length, incidencias_pendientes: d.nom.filter(n => up(n.estatus) !== 'RESUELTO').length,
     cursos_programados: d.cursosProg, cursos_realizados: d.cursosReal, avance_capacitacion: d.cursosProg ? d.cursosReal / d.cursosProg : 0,
     cap_programados: capProg, cap_asistieron: capAsis, asistencia_capacitacion: capProg ? capAsis / capProg : 0,
-  };
+    bajas: bajas.length, bajas_voluntarias: bajas.filter(b => b.clasificacion === 'VOLUNTARIA').length,
+    bajas_forzadas: bajas.filter(b => b.clasificacion === 'FORZADA').length,
+    secciones: [...secs].join(','),
+  }, secs);
 }
 
 function porPlanta(d, s) {
   return d.plantas.map(p => {
     const f = d.faltas.filter(x => x.planta === p.planta), inc = d.incap.filter(x => x.planta === p.planta);
     const c = d.cap.find(x => x.planta === p.planta) || { prog: 0, asis: 0 };
-    return {
+    const ausente = !secsDe(s).has('ausentismo'), sinIncap = !secsDe(s).has('incapacidades'), sinCap = !secsDe(s).has('capacitacion');
+    const x = {
       id_semana: s.id_semana, anio: s.anio, semana: s.semana, planta: p.planta, personal: p.personal, faltas: f.length,
       injustificadas: f.filter(x => x.motivo === 'INJUSTIFICADA').length, justificadas: f.filter(x => x.motivo === 'JUSTIFICADA').length,
       disciplina: f.filter(x => x.motivo === 'DISCIPLINA').length, ausentismo: p.personal ? f.length / p.personal : 0,
       incapacidades: inc.length, dias_incapacidad: sum(inc, x => x.dias_en_la_semana), cap_programados: c.prog, cap_asistieron: c.asis,
     };
+    if (ausente || !p.personal) x.ausentismo = '';
+    if (ausente) ['faltas', 'injustificadas', 'justificadas', 'disciplina'].forEach(k => x[k] = '');
+    if (sinIncap) ['incapacidades', 'dias_incapacidad'].forEach(k => x[k] = '');
+    if (sinCap) ['cap_programados', 'cap_asistieron'].forEach(k => x[k] = '');
+    return x;
   });
 }
 
@@ -329,12 +384,22 @@ const KPIS = [
   ['Incidencias de nómina', 'incidencias_nomina', false, false, s => `${s.incidencias_pendientes} pendientes`],
   ['Avance capacitación', 'avance_capacitacion', true, true, s => `${s.cursos_realizados} de ${s.cursos_programados} cursos`],
   ['Asistencia capacitación', 'asistencia_capacitacion', true, true, s => `${s.cap_asistieron} de ${s.cap_programados} programados`],
+  ['Bajas del periodo', 'bajas', false, false, s => `${s.bajas_voluntarias} voluntarias · ${s.bajas_forzadas} forzadas`],
 ];
 
 function renderKpis(s, prev) {
-  $('periodo').textContent = `Periodo ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)} · ${s.personal} personas en planta`;
-  $('kpis').innerHTML = KPIS.map(([t, f, esPct, subirEsBueno, sub]) => tile(t, esPct ? pct(s[f]) : s[f], sub(s),
-    prev && prev[f] !== '' && prev[f] != null ? deltaHtml(Number(s[f]) - Number(prev[f]), esPct, subirEsBueno, `S${prev.semana}`) : '')).join('');
+  $('periodo').textContent = `Periodo ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)} · ` +
+    (Number(s.personal) ? `${s.personal} personas en planta` : 'personal en planta sin capturar');
+  const vacio = v => v === '' || v == null;
+  const tiles = KPIS.map(([t, f, esPct, subirEsBueno, sub]) => vacio(s[f]) ? tile(t, '—', 'Sin datos')
+    : tile(t, esPct ? pct(s[f]) : s[f], sub(s),
+      prev && !vacio(prev[f]) ? deltaHtml(Number(s[f]) - Number(prev[f]), esPct, subirEsBueno, `P${prev.semana}`) : ''));
+  if (!vacio(s.bajas)) {
+    const previos = hist.semanal.filter(r => Number(r.anio) === Number(s.anio) && Number(r.semana) < Number(s.semana));
+    const acum = sum(previos, r => r.bajas) + Number(s.bajas);
+    tiles.push(tile(`Bajas acumuladas ${s.anio}`, acum, `periodos 1 a ${s.semana} con datos guardados`));
+  }
+  $('kpis').innerHTML = tiles.join('');
 }
 
 // ---------- Rotación (cifras anuales; se guardan con cada semana) ----------
@@ -378,6 +443,9 @@ function renderSemana(d) {
   renderRot(d.rot || []);
   const fechas = d.faltas.map(f => f.fecha_falta).sort();
   $('aviso').innerHTML = (d.errores || []).map(e => '⚠ ' + esc(e)).join('<br>');
+  const secs = d.secs || secsDe(null);
+  document.querySelectorAll('#semana [data-sec]').forEach(el => el.hidden = !secs.has(el.dataset.sec));
+  renderBajas(d.bajas || []);
 
   const P = d.plantas.map(p => p.planta);
   const motivoDs = fn => MOTIVOS.map(m => ({ label: titulo(m), color: COLOR_MOTIVO[m], data: fn(m) }));
@@ -417,6 +485,31 @@ function renderSemana(d) {
   $('drop').hidden = true; $('semana').hidden = false; $('exportar').hidden = false;
 }
 
+// ---------- Bajas (reclutamiento) ----------
+const RANGOS = [[90, '0–3 meses'], [180, '3–6 meses'], [365, '6–12 meses'], [730, '1–2 años'], [1825, '2–5 años'], [Infinity, '5+ años']];
+const diasAntig = b => b.fecha_de_alta && b.fecha_de_baja ? Math.round((utc(b.fecha_de_baja) - utc(b.fecha_de_alta)) / DIA) : null;
+const rango = dias => dias == null ? 'Sin dato' : RANGOS.find(([lim]) => dias < lim)[1];
+const antigTxt = dias => dias == null ? "" : dias === 1 ? "1 día" : dias < 60 ? `${dias} días` : dias < 730 ? `${Math.round(dias / 30.4)} meses` : `${(dias / 365).toFixed(1)} años`;
+const sinDato = v => !v || /^#?n\/?a$/i.test(String(v).trim()) ? 'Sin dato' : v;
+
+function renderBajas(B) {
+  const tot = B.length, orden = o => Object.entries(o).sort((a, b) => b[1] - a[1]);
+  const mot = orden(count(B, b => titulo(b.motivo) || 'Sin dato'));
+  mk('bMotivo', 'bar', mot.map(x => x[0]), [{ label: 'Bajas', color: '--navy', data: mot.map(x => x[1]) }], { horizontal: true, tot });
+  const pl = orden(count(B, b => sinDato(b.planta))).map(x => x[0]);
+  mk('bPlanta', 'bar', pl, [
+    { label: 'Voluntaria', color: '--navy', data: pl.map(p => B.filter(b => sinDato(b.planta) === p && b.clasificacion === 'VOLUNTARIA').length) },
+    { label: 'Forzada', color: '--gris', data: pl.map(p => B.filter(b => sinDato(b.planta) === p && b.clasificacion !== 'VOLUNTARIA').length) },
+  ], { horizontal: true, stacked: true });
+  const ra = count(B, b => rango(diasAntig(b))), etiquetas = RANGOS.map(r => r[1]).concat(ra['Sin dato'] ? ['Sin dato'] : []);
+  mk('bAntig', 'bar', etiquetas, [{ label: 'Bajas', color: '--navy', data: etiquetas.map(e => ra[e] || 0) }], { tot });
+  const ca = orden(count(B.filter(b => b.causa), b => String(b.causa).trim()));
+  mk('bCausa', 'bar', ca.map(x => x[0]), [{ label: 'Bajas', color: '--teal', data: ca.map(x => x[1]) }], { horizontal: true, tot });
+  tbl('tBajas', ['Fecha de baja', 'Ficha', 'Nombre', 'Puesto', 'Tipo', 'Planta', 'Antigüedad', 'Clasificación', 'Motivo', 'Causa'],
+    [...B].sort((a, b) => a.fecha_de_baja.localeCompare(b.fecha_de_baja)).map(b => [fdate(b.fecha_de_baja), esc(sinDato(b.ficha)), esc(b.nombre),
+      esc(sinDato(b.puesto)), esc(sinDato(b.tipo_de_empleado)), esc(sinDato(b.planta)), antigTxt(diasAntig(b)), titulo(b.clasificacion), titulo(b.motivo), esc(b.causa ?? '')]));
+}
+
 // ---------- Histórico (Google Sheets) ----------
 function renderHist() {
   const S = [...hist.semanal].sort((a, b) => String(a.id_semana).localeCompare(b.id_semana));
@@ -433,21 +526,26 @@ function renderHist() {
   const ids = S.map(r => r.id_semana);
   const plantas = [...new Set(hist.plantas.map(p => p.planta))].sort();
   mk('hAus', 'line', L, plantas.map((p, i) => ({ label: p, color: COLOR_PLANTA[i],
-    data: ids.map(id => hist.plantas.find(x => x.id_semana === id && x.planta === p)?.ausentismo ?? null) })), { pct: true });
-  mk('hFaltas', 'bar', L, MOTIVOS.map(m => ({ label: titulo(m), color: COLOR_MOTIVO[m], data: S.map(r => r[CAMPO_MOTIVO[m]]) })), { stacked: true });
-  mk('hIncap', 'bar', L, [{ label: 'Días de incapacidad', color: '--navy', data: S.map(r => r.dias_incapacidad) }]);
+    data: ids.map(id => num(hist.plantas.find(x => x.id_semana === id && x.planta === p)?.ausentismo)) })), { pct: true });
+  mk('hFaltas', 'bar', L, MOTIVOS.map(m => ({ label: titulo(m), color: COLOR_MOTIVO[m], data: S.map(r => num(r[CAMPO_MOTIVO[m]])) })), { stacked: true });
+  mk('hIncap', 'bar', L, [{ label: 'Días de incapacidad', color: '--navy', data: S.map(r => num(r.dias_incapacidad)) }]);
   mk('hNom', 'bar', L, [
-    { label: 'Total', color: '--gris', data: S.map(r => r.incidencias_nomina) },
-    { label: 'Pendientes', color: '--navy', data: S.map(r => r.incidencias_pendientes) },
+    { label: 'Total', color: '--gris', data: S.map(r => num(r.incidencias_nomina)) },
+    { label: 'Pendientes', color: '--navy', data: S.map(r => num(r.incidencias_pendientes)) },
   ]);
   mk('hCap', 'line', L, [
-    { label: 'Avance del programa', color: '--navy', data: S.map(r => r.avance_capacitacion) },
-    { label: 'Asistencia', color: '--teal', data: S.map(r => r.asistencia_capacitacion) },
+    { label: 'Avance del programa', color: '--navy', data: S.map(r => num(r.avance_capacitacion)) },
+    { label: 'Asistencia', color: '--teal', data: S.map(r => num(r.asistencia_capacitacion)) },
   ], { pct: true });
-  tbl('tHist', ['Semana', 'Del', 'Al', 'Ausentismo', 'Faltas', 'Injust.', 'Incap.', 'Días incap.', 'Riesgos', 'Inc. nómina', 'Pendientes', 'Avance cap.', 'Asist. cap.'],
-    [...S].reverse().map(r => [esc(r.id_semana), fdate(r.del), fdate(r.al), pct(r.ausentismo), r.faltas, r.injustificadas, r.incapacidades,
-      r.dias_incapacidad, r.riesgos_trabajo, r.incidencias_nomina, r.incidencias_pendientes, pct(r.avance_capacitacion), pct(r.asistencia_capacitacion)]),
-    [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  mk('hBajas', 'bar', L, [
+    { label: 'Voluntarias', color: '--navy', data: S.map(r => num(r.bajas_voluntarias)) },
+    { label: 'Forzadas', color: '--gris', data: S.map(r => num(r.bajas_forzadas)) },
+  ], { stacked: true });
+  const v = x => x === '' || x == null ? '—' : x;
+  tbl('tHist', ['Periodo', 'Del', 'Al', 'Ausentismo', 'Faltas', 'Injust.', 'Incap.', 'Días incap.', 'Riesgos', 'Inc. nómina', 'Pendientes', 'Avance cap.', 'Asist. cap.', 'Bajas'],
+    [...S].reverse().map(r => [esc(r.id_semana), fdate(r.del), fdate(r.al), pct(r.ausentismo), v(r.faltas), v(r.injustificadas), v(r.incapacidades),
+      v(r.dias_incapacidad), v(r.riesgos_trabajo), v(r.incidencias_nomina), v(r.incidencias_pendientes), pct(r.avance_capacitacion), pct(r.asistencia_capacitacion), v(r.bajas)]),
+    [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 }
 
 async function cargarHist() {
@@ -455,7 +553,7 @@ async function cargarHist() {
   try {
     $('estado').textContent = 'Leyendo histórico de Google Sheets…';
     hist = await (await fetch(SHEETS_URL)).json();
-    $('estado').textContent = `Histórico: ${hist.semanal.length} semana(s) guardada(s).`;
+    $('estado').textContent = `Histórico: ${hist.semanal.length} periodo(s) guardado(s).`;
     renderHist();
     if (vista) renderKpis(resumen(vista), anterior(resumen(vista).id_semana));
     else if (hist.semanal.length) verSemana(hist.semanal.at(-1).id_semana, false);
@@ -473,9 +571,35 @@ async function enviar(body) {
   return r;
 }
 
+// Arma un periodo guardado con la misma forma que parse(): fila del histórico + detalle (r) de Google Sheets.
+function desdeHist(s, r) {
+  const id = s.id_semana, P = hist.plantas.filter(p => p.id_semana === id);
+  return {
+    anio: Number(s.anio), semana: Number(s.semana), del: s.del, al: s.al, secs: secsDe(s),
+    plantas: P.map(p => ({ planta: p.planta, personal: Number(p.personal) || 0 })),
+    faltas: (r.faltas || []).map(f => ({ ...f, fecha_falta: ymd(f.fecha_falta) })),
+    incap: r.incapacidades || [], nom: r.incidencias || [], bajas: (r.bajas || []).map(normBaja),
+    cap: P.map(p => ({ planta: p.planta, prog: Number(p.cap_programados) || 0, asis: Number(p.cap_asistieron) || 0 })),
+    cursosProg: Number(s.cursos_programados) || 0, cursosReal: Number(s.cursos_realizados) || 0,
+    rot: (hist.rotacion || []).filter(x => x.id_semana === id),
+  };
+}
+
+// Junta el archivo nuevo con lo ya guardado: los departamentos que el archivo no trae se toman del periodo guardado.
+async function combinar(a, previo, clave) {
+  const faltan = [...secsDe(previo)].filter(id => !a.secs.has(id));
+  if (!faltan.length && sum(a.plantas, p => p.personal)) return a;
+  const viejo = desdeHist(previo, await enviar({ clave, accion: 'detalle', id_semana: previo.id_semana }));
+  const m = { ...a, secs: new Set([...a.secs, ...faltan]) };
+  const tomar = { ausentismo: ['faltas'], incapacidades: ['incap'], nomina: ['nom'], capacitacion: ['cap', 'cursosProg', 'cursosReal'], rotacion: ['rot'], bajas: ['bajas'] };
+  faltan.forEach(id => tomar[id].forEach(k => m[k] = viejo[k]));
+  if (!sum(m.plantas, p => p.personal) && sum(viejo.plantas, p => p.personal)) m.plantas = viejo.plantas;
+  return m;
+}
+
 // Muestra una semana guardada: totales del histórico + detalle (con clave) desde Google Sheets.
 async function verSemana(id, preguntar = true) {
-  if (actual && resumen(actual).id_semana === id) { renderSemana(actual); $('estado').textContent = `Viendo semana ${id} (Excel cargado).`; return; }
+  if (actual && resumen(actual).id_semana === id) { renderSemana(actual); $('estado').textContent = `Viendo periodo ${id} (Excel cargado).`; return; }
   const s = hist.semanal.find(r => r.id_semana === id);
   if (!s) return;
   const rot = (hist.rotacion || []).filter(r => r.id_semana === id);
@@ -489,16 +613,8 @@ async function verSemana(id, preguntar = true) {
   try {
     const r = await enviar({ clave, accion: 'detalle', id_semana: id });
     if ($('sel').value !== id) return; // el usuario ya eligió otra
-    const P = hist.plantas.filter(p => p.id_semana === id);
-    renderSemana({
-      anio: s.anio, semana: s.semana, del: s.del, al: s.al,
-      plantas: P.map(p => ({ planta: p.planta, personal: Number(p.personal) || 0 })),
-      faltas: r.faltas.map(f => ({ ...f, fecha_falta: String(f.fecha_falta).slice(0, 10) })),
-      incap: r.incapacidades, nom: r.incidencias,
-      cap: P.map(p => ({ planta: p.planta, prog: Number(p.cap_programados) || 0, asis: Number(p.cap_asistieron) || 0 })),
-      cursosProg: Number(s.cursos_programados) || 0, cursosReal: Number(s.cursos_realizados) || 0, rot,
-    });
-    $('estado').textContent = `Viendo semana ${id} (desde Google Sheets).`;
+    renderSemana(desdeHist(s, r));
+    $('estado').textContent = `Viendo periodo ${id} (desde Google Sheets).`;
   } catch (e) {
     $('semana').hidden = true;
     $('estado').textContent = e instanceof TypeError // falla de red/CORS: casi siempre el Apps Script publicado es una versión vieja
@@ -508,13 +624,17 @@ async function verSemana(id, preguntar = true) {
 }
 
 async function guardar() {
-  const s = resumen(actual);
-  const existe = hist.semanal.some(r => r.id_semana === s.id_semana);
+  let s = resumen(actual);
+  const previo = hist.semanal.find(r => r.id_semana === s.id_semana), existe = !!previo;
   if (actual.errores.length) return alert('No se puede guardar: el archivo no coincide con el calendario de periodos.\n\n' + actual.errores.join('\n'));
   if (!confirm(`¿Guardar el periodo ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
-    (existe ? '\n\nEse periodo ya existe y se va a REEMPLAZAR.' : ''))) return;
+    `\n\nDepartamentos en este archivo: ${[...actual.secs].map(id => SECCIONES[id]).join(', ') || 'ninguno'}.` +
+    (existe ? '\nEse periodo ya existe: se reemplazan esos departamentos y se conservan los demás.' : ''))) return;
   const clave = pedirClave(true);
   if (!clave) return;
+  try {
+    if (previo) { actual = await combinar(actual, previo, clave); s = resumen(actual); renderSemana(actual); }
+  } catch (e) { return alert('No pude leer lo ya guardado de ese periodo, no se guardó nada: ' + e.message); }
   const tablas = {
     Historico_Semanal: [s],
     Historico_Plantas: porPlanta(actual, s),
@@ -522,11 +642,12 @@ async function guardar() {
     Incapacidades: actual.incap.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
     Incidencias_Nomina: actual.nom.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
     Rotacion: actual.rot.map(r => ({ id_semana: s.id_semana, ...r })),
+    Bajas: actual.bajas.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
   };
   $('estado').textContent = 'Guardando en Google Sheets…';
   try {
     await enviar({ clave, id_semana: s.id_semana, tablas });
-    $('estado').textContent = `Semana ${s.id_semana} guardada.`;
+    $('estado').textContent = `Periodo ${s.id_semana} guardado.`;
     await cargarHist();
   } catch (e) { $('estado').textContent = 'No se guardó: ' + e.message; alert('No se guardó: ' + e.message); }
 }
@@ -557,33 +678,34 @@ function exportar() {
 
   add('Resumen', [
     ['KPIs Recursos Humanos'],
-    [`Semana ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)}`],
-    [`Personal en planta: ${s.personal}`],
+    [`Periodo ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)}`],
+    [`Personal en planta: ${s.personal || 'sin capturar'}`],
     [],
-    ['Indicador', `Semana ${s.semana}`, ...(prev ? [`Semana ${prev.semana}`, 'Cambio'] : []), 'Detalle'],
-    ...KPIS.map(([t, f, esPct, , sub]) => [t, val(s[f], esPct),
-      ...(prev ? [val(prev[f], esPct), val(Number(s[f]) - Number(prev[f]), esPct)] : []), sub(s)]),
+    ['Indicador', `Periodo ${s.semana}`, ...(prev ? [`Periodo ${prev.semana}`, 'Cambio'] : []), 'Detalle'],
+    ...KPIS.map(([t, f, esPct, , sub]) => s[f] === '' || s[f] == null ? [t, 'Sin datos'] : [t, val(s[f], esPct),
+      ...(prev ? [val(prev[f], esPct), prev[f] === '' || prev[f] == null ? '' : val(Number(s[f]) - Number(prev[f]), esPct)] : []), sub(s)]),
   ]);
+  const secs = d.secs || secsDe(null), tiene = id => secs.has(id);
   add('Plantas', [
     ['Planta', 'Personal', 'Faltas', 'Injustificadas', 'Justificadas', 'Disciplina', '% Ausentismo', 'Incapacidades', 'Días incapacidad', 'Cap. programados', 'Cap. asistieron'],
     ...porPlanta(d, s).map(p => [p.planta, p.personal, p.faltas, p.injustificadas, p.justificadas, p.disciplina, P(p.ausentismo), p.incapacidades, p.dias_incapacidad, p.cap_programados, p.cap_asistieron]),
   ]);
-  add('Faltas', [
+  if (tiene('ausentismo')) add('Faltas', [
     ['Fecha', 'Ficha', 'Nombre', 'Planta', 'Motivo', 'Supervisor', 'Notas'],
     ...d.faltas.map(f => [F(f.fecha_falta), f.numero_empleado, f.nombre, f.planta, titulo(f.motivo), f.supervisor, f.notas]),
   ]);
-  add('Incapacidades', [
+  if (tiene('incapacidades')) add('Incapacidades', [
     ['Ficha', 'Nombre', 'Planta', 'Tipo', 'Días en la semana', 'Inicial', 'Final', 'Probable alta', 'Días acumulados', 'Diagnóstico'],
     ...d.incap.map(i => [i.ficha, i.nombre, i.planta, titulo(i.tipo_de_incapacidad), i.dias_en_la_semana, F(i.inicial), F(i.final), F(i.probable_alta), i.dias_acumulados, i.diagnostico]),
   ]);
-  add('Incidencias nómina', [
+  if (tiene('nomina')) add('Incidencias nómina', [
     ['Fecha', 'Ficha', 'Reportado por', 'Puesto', 'Área', 'Tipo', 'Descripción', 'Estatus', 'Fecha de solución', 'Días para resolver'],
     ...d.nom.map(n => [F(n.fecha), n.ficha, n.reportado_por, n.puesto, n.area, n.tipo_de_incidencia, n.descripcion, n.estatus, F(n.fecha_de_solucion), n.dias_para_resolver]),
   ]);
 
   const cp = sum(d.cap, c => c.prog), ca = sum(d.cap, c => c.asis);
-  add('Capacitación', [
-    [`Capacitación · semana ${s.semana} de ${s.anio}`],
+  if (tiene('capacitacion')) add('Capacitación', [
+    [`Capacitación · periodo ${s.semana} de ${s.anio}`],
     [],
     ['Asistencia de la semana'],
     ['Planta', 'Programados', 'Asistieron', '% Asistencia'],
@@ -620,6 +742,11 @@ function exportar() {
     if (dias) aoa.push([], [`Antigüedad promedio al momento de la baja ${a}`], ['Días', dias], ['Años', +(dias / 365).toFixed(1)]);
     add('Rotación', aoa);
   }
+  if (tiene('bajas')) add('Bajas', [
+    ['Fecha de baja', 'Ficha', 'Nombre', 'Puesto', 'Tipo de empleado', 'Planta', 'Fecha de alta', 'Antigüedad (días)', 'Rango de antigüedad', 'Clasificación', 'Motivo', 'Causa'],
+    ...d.bajas.map(b => [F(b.fecha_de_baja), b.ficha, b.nombre, b.puesto, b.tipo_de_empleado, b.planta, F(b.fecha_de_alta),
+      diasAntig(b) ?? '', rango(diasAntig(b)), titulo(b.clasificacion), titulo(b.motivo), b.causa ?? '']),
+  ]);
   XLSX.writeFile(wb, `KPIs_RH_${s.id_semana}.xlsx`);
 }
 

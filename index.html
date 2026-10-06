@@ -294,6 +294,47 @@ function validarFormato(wb, secs) {
   return err;
 }
 
+// ---------- Registros de otros periodos ----------
+// Cada falta, baja e incidencia va al periodo de su fecha; cada incapacidad, a todos los periodos que toca.
+// Solo periodos ya iniciados (no se crean periodos futuros). Lo que no tiene periodo se queda y lo reporta validar().
+const idDe = per => `${per.anio}-S${String(per.n).padStart(2, '0')}`;
+const SEC_DE = { faltas: 'ausentismo', incap: 'incapacidades', nom: 'nomina', bajas: 'bajas' };
+const CLAVE_REG = {
+  faltas: r => `${r.numero_empleado}|${ymd(r.fecha_falta)}`,
+  incap: r => `${r.ficha}|${ymd(r.inicial)}`,
+  nom: r => `${ymd(r.fecha)}|${r.ficha}|${r.descripcion}`,
+  bajas: r => `${r.ficha || r.nombre}|${ymd(r.fecha_de_baja)}`,
+};
+// Agrega `nuevos` a `lista`; si un registro ya existía (misma clave) se reemplaza, no se duplica.
+const agregar = (lista, nuevos, k) => { const ks = new Set(nuevos.map(k)); return [...lista.filter(x => !ks.has(k(x))), ...nuevos]; };
+
+function repartir(d) {
+  const p = d.periodo, hoy = ymd(new Date()), otros = {};
+  const mandar = (per, campo, r) => (otros[idDe(per)] ??= { periodo: per, faltas: [], incap: [], nom: [], bajas: [] })[campo].push(r);
+  const iniciado = per => per && per.del <= hoy;
+  for (const [campo, fecha] of [['faltas', 'fecha_falta'], ['bajas', 'fecha_de_baja'], ['nom', 'fecha']]) {
+    d[campo] = d[campo].filter(r => {
+      const per = periodoDeFecha(ymd(r[fecha]));
+      if (!iniciado(per) || idDe(per) === idDe(p)) return true;
+      mandar(per, campo, r); return false;
+    });
+  }
+  const primero = Object.values(PERIODOS).map(c => c.inicio).sort()[0];
+  d.incap = d.incap.filter(i => {
+    if (!esFecha(i.inicial) || !esFecha(i.final)) return true;
+    let toca = false, enviada = false;
+    for (let per = periodoDeFecha(ymd(i.inicial) < primero ? primero : ymd(i.inicial)); iniciado(per) && per.del <= ymd(i.final);
+         per = periodoDeFecha(isoUtc(utc(per.al) + DIA))) {
+      if (idDe(per) === idDe(p)) toca = true; else { mandar(per, 'incap', i); enviada = true; }
+    }
+    return toca || !enviada; // sin ningún periodo válido: se queda para que validar() la reporte
+  });
+  d.otros = otros;
+}
+const NOMBRE_REG = { faltas: ['falta', 'faltas'], incap: ['incapacidad', 'incapacidades'], nom: ['incidencia', 'incidencias'], bajas: ['baja', 'bajas'] };
+const resumenOtros = otros => Object.entries(otros).sort().map(([, o]) => `P${o.periodo.n}: ` +
+  Object.keys(NOMBRE_REG).filter(c => o[c].length).map(c => `${o[c].length} ${NOMBRE_REG[c][o[c].length === 1 ? 0 : 1]}`).join(', '));
+
 // Coteja el Excel contra el calendario. Devuelve la lista de problemas (vacía = correcto).
 function validar(d) {
   const del = ymd(d.del), al = ymd(d.al), p = d.periodo, err = [];
@@ -302,14 +343,16 @@ function validar(d) {
   if (d.semana !== p.n) err.push(`En Config dice semana ${d.semana || '(vacía)'}, pero el ${fd(del)} pertenece al periodo ${p.n} de ${p.anio}.`);
   if (del !== p.del) err.push(`"Del" debe ser ${fd(p.del)} (inicio del periodo ${p.n}).`);
   if (al !== p.al) err.push(`"Al" debe ser ${fd(p.al)} (fin del periodo ${p.n}); en Config dice ${fd(al) || 'vacío'}.`);
+  // Lo de otros periodos ya se repartió (repartir); aquí solo queda lo que no tiene periodo válido.
   const fuera = (lista, campo, que) => {
     const f = lista.filter(x => esFecha(x[campo]) && (x[campo] < p.del || x[campo] > p.al)); // las fechas inválidas ya las reporta validarFormato
-    if (f.length) err.push(`${f.length} ${que} con fecha fuera del periodo: ${[...new Set(f.map(x => fd(x[campo])))].join(', ')}.`);
+    if (f.length) err.push(`${f.length} ${que} con fecha fuera del calendario o posterior a hoy: ${[...new Set(f.map(x => fd(x[campo])))].join(', ')}.`);
   };
   fuera(d.faltas, 'fecha_falta', 'falta(s)');
   fuera(d.bajas, 'fecha_de_baja', 'baja(s)');
+  fuera(d.nom, 'fecha', 'incidencia(s)');
   const ajenas = d.incap.filter(i => esFecha(i.inicial) && esFecha(i.final) && diasEnPeriodo(i, p.del, p.al) === 0);
-  if (ajenas.length) err.push(`${ajenas.length} incapacidad(es) no caen en el periodo (ficha ${ajenas.map(i => `${i.ficha}: ${fd(i.inicial)}–${fd(i.final)}`).join('; ')}). Quítalas de este archivo.`);
+  if (ajenas.length) err.push(`${ajenas.length} incapacidad(es) fuera del calendario o que empiezan después de hoy (ficha ${ajenas.map(i => `${i.ficha}: ${fd(i.inicial)}–${fd(i.final)}`).join('; ')}).`);
   if (!d.secs.size) err.push('En la hoja Config no está marcado ningún departamento con "Sí".');
   return err;
 }
@@ -512,7 +555,8 @@ function renderSemana(d) {
   renderKpis(s, anterior(s.id_semana));
   renderRot(d.rot || []);
   const fechas = d.faltas.map(f => f.fecha_falta).sort();
-  $('aviso').innerHTML = (d.errores || []).map(e => '⚠ ' + esc(e)).join('<br>');
+  $('aviso').innerHTML = (d.errores || []).map(e => '⚠ ' + esc(e)).concat(d.otros && Object.keys(d.otros).length
+    ? [`↪ Registros de otros periodos (se agregan a ese periodo al guardar): ${esc(resumenOtros(d.otros).join(' · '))}`] : []).join('<br>');
   const secs = d.secs || secsDe(null);
   document.querySelectorAll('#semana [data-sec]').forEach(el => el.hidden = !secs.has(el.dataset.sec));
   // Bloques que quedaron sin tarjetas visibles se ocultan para no dejar huecos.
@@ -695,33 +739,58 @@ async function verSemana(id, preguntar = true) {
   }
 }
 
+const tablasDe = (d, s) => ({
+  Historico_Semanal: [s],
+  Historico_Plantas: porPlanta(d, s),
+  Faltas: d.faltas.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
+  Incapacidades: d.incap.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
+  Incidencias_Nomina: d.nom.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
+  Rotacion: d.rot.map(r => ({ id_semana: s.id_semana, ...r })),
+  Bajas: d.bajas.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
+});
+
+// Periodo distinto al del archivo: se toma lo guardado y se le AGREGAN los registros (sin duplicar).
+async function agregarAPeriodo(id, o, clave) {
+  const previo = hist.semanal.find(r => r.id_semana === id), per = o.periodo;
+  const base = previo ? desdeHist(previo, await enviar({ clave, accion: 'detalle', id_semana: id }))
+    : { anio: per.anio, semana: per.n, del: per.del, al: per.al, secs: new Set(), faltas: [], incap: [], nom: [], bajas: [], cap: [], cursosProg: 0, cursosReal: 0, rot: [],
+        plantas: actual.plantas.map(x => ({ planta: x.planta, personal: 0 })) };
+  const m = { ...base, secs: new Set(base.secs) };
+  for (const campo of Object.keys(SEC_DE)) if (o[campo].length) { m[campo] = agregar(m[campo], o[campo], CLAVE_REG[campo]); m.secs.add(SEC_DE[campo]); }
+  const s = resumen(m);
+  await enviar({ clave, id_semana: id, tablas: tablasDe(m, s) });
+}
+
 async function guardar() {
   let s = resumen(actual);
   const previo = hist.semanal.find(r => r.id_semana === s.id_semana), existe = !!previo;
+  const otros = Object.entries(actual.otros || {});
   if (actual.errores.length) return alert('No se puede guardar: el archivo tiene errores.\n\n' + actual.errores.join('\n'));
   if (!confirm(`¿Guardar el periodo ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
     `\n\nDepartamentos en este archivo: ${[...actual.secs].map(id => SECCIONES[id]).join(', ') || 'ninguno'}.` +
-    (existe ? '\nEse periodo ya existe: se reemplazan esos departamentos y se conservan los demás.' : ''))) return;
+    (existe ? '\nEse periodo ya existe: se reemplazan esos departamentos y se conservan los demás.' : '') +
+    (otros.length ? `\n\nTambién se AGREGAN a otros periodos (sin borrar lo que ya tienen):\n${resumenOtros(actual.otros).join('\n')}` : ''))) return;
   const clave = pedirClave(true);
   if (!clave) return;
   try {
     if (previo) { actual = await combinar(actual, previo, clave); s = resumen(actual); renderSemana(actual); }
   } catch (e) { return alert('No pude leer lo ya guardado de ese periodo, no se guardó nada: ' + e.message); }
-  const tablas = {
-    Historico_Semanal: [s],
-    Historico_Plantas: porPlanta(actual, s),
-    Faltas: actual.faltas.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
-    Incapacidades: actual.incap.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
-    Incidencias_Nomina: actual.nom.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
-    Rotacion: actual.rot.map(r => ({ id_semana: s.id_semana, ...r })),
-    Bajas: actual.bajas.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
-  };
   $('estado').textContent = 'Guardando en Google Sheets…';
+  const hechos = [], fallas = [];
   try {
-    await enviar({ clave, id_semana: s.id_semana, tablas });
-    $('estado').textContent = `Periodo ${s.id_semana} guardado.`;
-    await cargarHist();
-  } catch (e) { $('estado').textContent = 'No se guardó: ' + e.message; alert('No se guardó: ' + e.message); }
+    await enviar({ clave, id_semana: s.id_semana, tablas: tablasDe(actual, s) });
+    hechos.push(`P${s.semana}`);
+  } catch (e) { $('estado').textContent = 'No se guardó: ' + e.message; return alert('No se guardó: ' + e.message); }
+  for (const [id, o] of otros) {
+    $('estado').textContent = `Agregando registros al periodo ${o.periodo.n}…`;
+    try { await agregarAPeriodo(id, o, clave); hechos.push(`P${o.periodo.n}`); }
+    catch (e) { fallas.push(`P${o.periodo.n}: ${e.message}`); }
+  }
+  actual.otros = {};
+  await cargarHist();
+  $('estado').textContent = `Guardado: ${hechos.join(', ')}.` + (fallas.length ? ` Falló: ${fallas.join('; ')} (vuelve a cargar el archivo para reintentar).` : '');
+  if (fallas.length) alert('Algunos periodos no se guardaron:\n' + fallas.join('\n'));
+  renderSemana(actual);
 }
 
 // ---------- Exportar la semana en pantalla a Excel ----------
@@ -827,6 +896,7 @@ async function load(buf) {
     const wb = XLSX.read(buf, { cellDates: true });
     actual = parse(wb);
     actual.periodo = periodoDeFecha(ymd(actual.del));
+    if (actual.periodo) repartir(actual);
     actual.errores = [...validarFormato(wb, actual.secs), ...validar(actual)];
     renderSemana(actual);
   } catch (e) { alert('No pude leer el archivo: ' + e.message); console.error(e); return; }

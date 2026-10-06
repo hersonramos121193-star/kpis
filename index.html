@@ -65,7 +65,8 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid
 th { color: var(--ink-2); font-weight: 600; }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .scroll { overflow-x: auto; }
-details summary { cursor: pointer; font-weight: 600; }
+details summary { cursor: pointer; font-weight: 600; font-size: 15px; }
+details[open] summary { margin-bottom: 8px; }
 .tag { padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid currentColor; white-space: nowrap; }
 .ok { color: var(--good); } .pend { color: var(--bad); }
 [hidden] { display: none !important; }
@@ -104,12 +105,12 @@ details summary { cursor: pointer; font-weight: 600; }
       <div class="card" data-sec="capacitacion"><h2>Asistencia a capacitación por planta</h2><div class="chart"><canvas id="cCap"></canvas></div></div>
     </section>
     <section class="grid charts">
-      <div class="card scroll" data-sec="ausentismo"><h2>Reincidentes (2+ faltas en la semana)</h2><table id="tReinc"></table></div>
-      <div class="card scroll" data-sec="ausentismo"><h2>Faltas por supervisor</h2><table id="tSup"></table></div>
+      <div class="card scroll" data-sec="ausentismo"><details><summary>Reincidentes · 2 o más faltas</summary><table id="tReinc"></table></details></div>
+      <div class="card scroll" data-sec="ausentismo"><details><summary>Faltas por supervisor</summary><table id="tSup"></table></details></div>
     </section>
     <section class="grid">
-      <div class="card scroll" data-sec="incapacidades"><h2>Incapacidades activas</h2><table id="tIncap"></table></div>
-      <div class="card scroll" data-sec="nomina"><h2>Incidencias de nómina</h2><table id="tNom"></table></div>
+      <div class="card scroll" data-sec="incapacidades"><details><summary>Incapacidades activas</summary><table id="tIncap"></table></details></div>
+      <div class="card scroll" data-sec="nomina"><details><summary>Incidencias de nómina</summary><table id="tNom"></table></details></div>
       <div class="card scroll" data-sec="ausentismo"><details><summary>Detalle de faltas</summary><table id="tFaltas"></table></details></div>
     </section>
 
@@ -120,7 +121,7 @@ details summary { cursor: pointer; font-weight: 600; }
       <div class="card"><h2>Antigüedad al momento de la baja</h2><div class="chart"><canvas id="bAntig"></canvas></div></div>
       <div class="card"><h2>Causas de la baja</h2><div class="chart"><canvas id="bCausa"></canvas></div></div>
     </section>
-    <div class="card scroll" data-sec="bajas"><h2>Detalle de bajas</h2><table id="tBajas"></table></div>
+    <div class="card scroll" data-sec="bajas"><details><summary>Detalle de bajas</summary><table id="tBajas"></table></details></div>
   </div>
 
   <div id="rotacion" hidden>
@@ -187,7 +188,10 @@ const CAMPOS = {
 };
 const vaciar = (o, secs) => { for (const [sec, cs] of Object.entries(CAMPOS)) if (!secs.has(sec)) cs.forEach(c => { if (c in o) o[c] = ''; }); return o; };
 const num = v => v === '' || v == null ? null : Number(v);
-const ymd = v => String(iso(v) ?? '').slice(0, 10);
+const ymd = v => {
+  const t = String(iso(v) ?? '').trim(), m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); // texto dd/mm/aaaa
+  return m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : t.slice(0, 10);
+};
 
 // Tabla de una hoja: busca la fila cuyo primer valor es `first`, lee hasta la primera fila con columna A vacía.
 // Si no existe la hoja o la tabla, regresa vacío con falta: true.
@@ -202,7 +206,7 @@ function table(wb, sheet, first) {
     if (r[0] === null || r[0] === '') break;
     out.push(Object.fromEntries(h.map((k, j) => [k, typeof r[j] === 'string' ? r[j].trim() : r[j]])));
   }
-  return { rows, out };
+  return { rows, out, enc: h, fila0: XLSX.utils.decode_range(ws['!ref']).s.r + i + 2 };
 }
 const cell = (rows, label) => (rows.find(r => key(r[0]).startsWith(key(label))) || []).slice(1).find(v => v !== null);
 
@@ -227,20 +231,85 @@ function periodoDeFecha(t) {
   return null;
 }
 
+// ---------- Formato esperado de cada departamento ----------
+// columnas: encabezados obligatorios (la primera va en la columna A). fechas / numeros / catalogo: se revisan fila por fila.
+const FORMATO = {
+  ausentismo: { hoja: 'Ausentismo', columnas: ['Numero_Empleado', 'Nombre', 'Planta', 'Fecha_Falta', 'Motivo'],
+    fechas: ['Fecha_Falta'], catalogo: { Motivo: ['Injustificada', 'Justificada', 'Disciplina'] } },
+  incapacidades: { hoja: 'Incapacidades', columnas: ['Ficha', 'Nombre', 'Planta', 'Tipo de incapacidad', 'Inicial', 'Final'],
+    fechas: ['Inicial', 'Final'], catalogo: { 'Tipo de incapacidad': ['Enfermedad', 'Riesgo de trabajo', 'Riesgo de trayecto', 'Maternidad'] } },
+  nomina: { hoja: 'Incidencias_Nomina', columnas: ['Fecha', 'Ficha', 'Reportado por', 'Tipo de incidencia', 'Descripción'],
+    fechas: ['Fecha'], catalogo: { 'Tipo de incidencia': ['Tiempo extra no aplicado', 'Falta mal aplicada', 'Descuento indebido', 'Bono o prima no pagado', 'Otro'] } },
+  capacitacion: { hoja: 'Capacitacion', columnas: ['Planta', 'Programados', 'Asistieron'], numeros: ['Programados', 'Asistieron'] },
+  rotacion: { hoja: 'Rotacion', columnas: ['Tipo de salida'], tablas: ['Rango de antigüedad', 'Motivo de baja', 'Tipo de puesto'], anios: true },
+  bajas: { hoja: 'Bajas', columnas: ['Fecha de baja', 'Ficha', 'Nombre', 'Planta', 'Fecha de alta', 'Clasificación', 'Motivo'],
+    fechas: ['Fecha de baja'], fechasOpc: ['Fecha de alta'],
+    catalogo: { 'Clasificación': ['Voluntaria', 'Forzada'], Motivo: ['Termino de contrato', 'Renuncia', 'Abandono'] } },
+};
+// Días que ampara la incapacidad, contando el día inicial y el final.
+const diasIncap = i => esFecha(i.inicial) && esFecha(i.final) ? (utc(ymd(i.final)) - utc(ymd(i.inicial))) / DIA + 1 : null;
+// Días de la incapacidad que caen dentro del periodo (se cuentan inicio y fin). Sin fechas: lo capturado en "Días en la semana".
+function diasEnPeriodo(i, del, al) {
+  if (!esFecha(i.inicial) || !esFecha(i.final) || !esFecha(del) || !esFecha(al)) return Number(i.dias_en_la_semana) || 0;
+  const a = Math.max(utc(ymd(i.inicial)), utc(ymd(del))), b = Math.min(utc(ymd(i.final)), utc(ymd(al)));
+  return b < a ? 0 : (b - a) / DIA + 1;
+}
+const esFecha = v => { const t = ymd(v); return /^\d{4}-\d\d-\d\d$/.test(t) && isoUtc(utc(t)) === t; };
+const vacio = v => v === null || v === undefined || v === '';
+
+// Revisa que cada departamento marcado "Sí" traiga su hoja, sus columnas y valores válidos.
+function validarFormato(wb, secs) {
+  const err = [];
+  const dep = table(wb, 'Config', 'Departamento');
+  if (!dep.falta) for (const r of dep.out) {
+    const v = String(Object.values(r)[1] ?? '').trim();
+    if (!secId(r.departamento)) err.push(`Config: el departamento "${r.departamento}" no existe (usa: ${Object.values(SECCIONES).join(', ')}).`);
+    else if (!/^(s[ií]|no)$/i.test(v)) err.push(`Config: en "${r.departamento}" escribe Sí o No (dice "${v}").`);
+  }
+  if (table(wb, 'Config', 'Planta').falta) err.push('Config: falta la tabla "Planta | Personal en planta".');
+  for (const id of secs) {
+    const f = FORMATO[id], nombre = SECCIONES[id];
+    if (!wb.Sheets[f.hoja]) { err.push(`${nombre} está marcado "Sí" pero el archivo no trae la hoja "${f.hoja}".`); continue; }
+    const t = table(wb, f.hoja, f.columnas[0]);
+    if (t.falta) { err.push(`Hoja "${f.hoja}": no encontré la tabla; el encabezado de la columna A debe decir "${f.columnas[0]}".`); continue; }
+    const faltan = f.columnas.filter(c => !t.enc.includes(key(c)));
+    if (faltan.length) { err.push(`Hoja "${f.hoja}": faltan las columnas ${faltan.map(c => `"${c}"`).join(', ')} (revisa que el encabezado esté escrito igual).`); continue; }
+    for (const tb of f.tablas || []) if (table(wb, f.hoja, tb).falta) err.push(`Hoja "${f.hoja}": falta la tabla "${tb}".`);
+    if (f.anios && !t.enc.some(k => /^\d{4}$/.test(k))) err.push(`Hoja "${f.hoja}": la tabla "Tipo de salida" debe tener una columna por año (2025, 2026…).`);
+    const malas = [];
+    t.out.forEach((r, k) => {
+      const mal = m => malas.push(`fila ${t.fila0 + k}: ${m}`), v = c => r[key(c)];
+      for (const c of f.fechas || []) if (!esFecha(v(c))) mal(`"${c}" no es fecha (${vacio(v(c)) ? 'vacía' : v(c)})`);
+      for (const c of f.fechasOpc || []) if (!vacio(v(c)) && !esFecha(v(c))) mal(`"${c}" no es fecha (${v(c)})`);
+      for (const c of f.numeros || []) if (vacio(v(c)) || isNaN(Number(v(c)))) mal(`"${c}" debe ser número (${vacio(v(c)) ? 'vacío' : v(c)})`);
+      for (const [c, ok] of Object.entries(f.catalogo || {})) if (!ok.map(key).includes(key(v(c))))
+        mal(`"${c}" dice "${v(c) ?? ''}" y no es válido (usa: ${ok.join(', ')})`);
+      if (id === 'incapacidades' && esFecha(v('Inicial')) && esFecha(v('Final')) && ymd(v('Inicial')) > ymd(v('Final')))
+        mal('la fecha inicial es posterior a la final');
+      if (id === 'bajas' && esFecha(v('Fecha de alta')) && esFecha(v('Fecha de baja')) && ymd(v('Fecha de alta')) > ymd(v('Fecha de baja')))
+        mal('la fecha de alta es posterior a la de baja');
+    });
+    if (malas.length) err.push(`Hoja "${f.hoja}": ${malas.slice(0, 5).join('; ')}${malas.length > 5 ? `; y ${malas.length - 5} más` : ''}.`);
+  }
+  return err;
+}
+
 // Coteja el Excel contra el calendario. Devuelve la lista de problemas (vacía = correcto).
 function validar(d) {
-  const del = String(iso(d.del)).slice(0, 10), al = String(iso(d.al)).slice(0, 10), p = d.periodo, err = [];
+  const del = ymd(d.del), al = ymd(d.al), p = d.periodo, err = [];
   const fd = t => fdate(t);
   if (!p) return [`La fecha "Del" de la hoja Config (${fd(del) || 'vacía'}) no está en el calendario de periodos.`];
   if (d.semana !== p.n) err.push(`En Config dice semana ${d.semana || '(vacía)'}, pero el ${fd(del)} pertenece al periodo ${p.n} de ${p.anio}.`);
   if (del !== p.del) err.push(`"Del" debe ser ${fd(p.del)} (inicio del periodo ${p.n}).`);
   if (al !== p.al) err.push(`"Al" debe ser ${fd(p.al)} (fin del periodo ${p.n}); en Config dice ${fd(al) || 'vacío'}.`);
   const fuera = (lista, campo, que) => {
-    const f = lista.filter(x => x[campo] < p.del || x[campo] > p.al);
+    const f = lista.filter(x => esFecha(x[campo]) && (x[campo] < p.del || x[campo] > p.al)); // las fechas inválidas ya las reporta validarFormato
     if (f.length) err.push(`${f.length} ${que} con fecha fuera del periodo: ${[...new Set(f.map(x => fd(x[campo])))].join(', ')}.`);
   };
   fuera(d.faltas, 'fecha_falta', 'falta(s)');
   fuera(d.bajas, 'fecha_de_baja', 'baja(s)');
+  const ajenas = d.incap.filter(i => esFecha(i.inicial) && esFecha(i.final) && diasEnPeriodo(i, p.del, p.al) === 0);
+  if (ajenas.length) err.push(`${ajenas.length} incapacidad(es) no caen en el periodo (ficha ${ajenas.map(i => `${i.ficha}: ${fd(i.inicial)}–${fd(i.final)}`).join('; ')}). Quítalas de este archivo.`);
   if (!d.secs.size) err.push('En la hoja Config no está marcado ningún departamento con "Sí".');
   return err;
 }
@@ -262,7 +331,7 @@ function parse(wb) {
     plantas: cfg.out.map(r => ({ planta: up(r.planta), personal: Number(r.personal_en_planta) || 0 })),
     faltas: si('ausentismo', table(wb, 'Ausentismo', 'Numero_Empleado').out.map(r => ({ ...r, fecha_falta: ymd(r.fecha_falta), planta: up(r.planta), motivo: up(r.motivo) }))),
     incap: si('incapacidades', table(wb, 'Incapacidades', 'Ficha').out.map(r => ({ ...r, planta: up(r.planta), tipo_de_incapacidad: up(r.tipo_de_incapacidad) }))),
-    nom: si('nomina', table(wb, 'Incidencias_Nomina', 'Fecha').out),
+    nom: si('nomina', table(wb, 'Incidencias_Nomina', 'Fecha').out.map(r => ({ ...r, fecha: ymd(r.fecha) }))),
     cap: si('capacitacion', cap.out.map(r => ({ planta: up(r.planta), prog: Number(r.programados) || 0, asis: Number(r.asistieron) || 0 }))),
     cursosProg: si('capacitacion', Number(cell(cap.rows, 'Cursos programados')) || 0, 0),
     cursosReal: si('capacitacion', Number(cell(cap.rows, 'Cursos realizados')) || 0, 0),
@@ -301,7 +370,7 @@ function resumen(d) {
     personal, faltas: d.faltas.length,
     injustificadas: mot.INJUSTIFICADA || 0, justificadas: mot.JUSTIFICADA || 0, disciplina: mot.DISCIPLINA || 0,
     ausentismo: personal ? d.faltas.length / personal : '',
-    incapacidades: d.incap.length, dias_incapacidad: sum(d.incap, i => i.dias_en_la_semana),
+    incapacidades: d.incap.length, dias_incapacidad: sum(d.incap, i => diasEnPeriodo(i, d.del, d.al)),
     riesgos_trabajo: tipo['RIESGO DE TRABAJO'] || 0, riesgos_trayecto: tipo['RIESGO DE TRAYECTO'] || 0,
     incidencias_nomina: d.nom.length,
     cursos_programados: d.cursosProg, cursos_realizados: d.cursosReal, avance_capacitacion: d.cursosProg ? d.cursosReal / d.cursosProg : 0,
@@ -321,7 +390,7 @@ function porPlanta(d, s) {
       id_semana: s.id_semana, anio: s.anio, semana: s.semana, planta: p.planta, personal: p.personal, faltas: f.length,
       injustificadas: f.filter(x => x.motivo === 'INJUSTIFICADA').length, justificadas: f.filter(x => x.motivo === 'JUSTIFICADA').length,
       disciplina: f.filter(x => x.motivo === 'DISCIPLINA').length, ausentismo: p.personal ? f.length / p.personal : 0,
-      incapacidades: inc.length, dias_incapacidad: sum(inc, x => x.dias_en_la_semana), cap_programados: c.prog, cap_asistieron: c.asis,
+      incapacidades: inc.length, dias_incapacidad: sum(inc, x => diasEnPeriodo(x, d.del, d.al)), cap_programados: c.prog, cap_asistieron: c.asis,
     };
     if (ausente || !p.personal) x.ausentismo = '';
     if (ausente) ['faltas', 'injustificadas', 'justificadas', 'disciplina'].forEach(k => x[k] = '');
@@ -361,6 +430,8 @@ function mk(id, type, labels, datasets, o = {}) {
 }
 
 function tbl(id, head, rows, num = []) {
+  const sm = $(id).closest('details')?.querySelector('summary');
+  if (sm) sm.textContent = `${sm.dataset.t ??= sm.textContent} (${rows.length})`;
   $(id).innerHTML = `<tr>${head.map((h, j) => `<th${num.includes(j) ? ' class="n"' : ''}>${h}</th>`).join('')}</tr>` +
     (rows.length ? rows.map(r => `<tr>${r.map((v, j) => `<td${num.includes(j) ? ' class="n"' : ''}>${v}</td>`).join('')}</tr>`).join('')
       : `<tr><td colspan="${head.length}">Sin registros</td></tr>`);
@@ -379,7 +450,7 @@ function deltaHtml(dlt, esPct, subirEsBueno, vs) {
 const KPIS = [
   ['Ausentismo semanal', 'ausentismo', true, false, s => `${s.faltas} faltas / ${s.personal} personas`],
   ['Faltas injustificadas', 'injustificadas', false, false, s => `${s.justificadas} justificadas · ${s.disciplina} disciplina`],
-  ['Incapacidades', 'incapacidades', false, false, s => `${s.dias_incapacidad} días en la semana`],
+  ['Incapacidades', 'incapacidades', false, false, s => `${s.dias_incapacidad} días en el periodo`],
   ['Riesgos de trabajo', 'riesgos_trabajo', false, false, s => `+ ${s.riesgos_trayecto} de trayecto`],
   ['Incidencias de nómina', 'incidencias_nomina', false, false, () => 'reportadas en el periodo'],
   ['Avance capacitación', 'avance_capacitacion', true, true, s => `${s.cursos_realizados} de ${s.cursos_programados} cursos`],
@@ -390,7 +461,6 @@ const KPIS = [
 function renderKpis(s, prev) {
   $('periodo').textContent = `Periodo ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)} · ` +
     (Number(s.personal) ? `${s.personal} personas en planta` : 'personal en planta sin capturar');
-  const vacio = v => v === '' || v == null;
   const tiles = KPIS.map(([t, f, esPct, subirEsBueno, sub]) => vacio(s[f]) ? tile(t, '—', 'Sin datos')
     : tile(t, esPct ? pct(s[f]) : s[f], sub(s),
       prev && !vacio(prev[f]) ? deltaHtml(Number(s[f]) - Number(prev[f]), esPct, subirEsBueno, `P${prev.semana}`) : ''));
@@ -457,7 +527,7 @@ function renderSemana(d) {
   mk('cDia', 'bar', dias.map(x => new Date(x + 'T12:00').toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric' })),
     motivoDs(m => dias.map(x => d.faltas.filter(f => f.fecha_falta === x && f.motivo === m).length)), { stacked: true });
   const tipos = Object.keys(count(d.incap, i => i.tipo_de_incapacidad));
-  mk('cIncap', 'bar', tipos.map(titulo), [{ label: 'Días', color: '--navy', data: tipos.map(t => sum(d.incap.filter(i => i.tipo_de_incapacidad === t), i => i.dias_en_la_semana)) }], { horizontal: true });
+  mk('cIncap', 'bar', tipos.map(titulo), [{ label: 'Días', color: '--navy', data: tipos.map(t => sum(d.incap.filter(i => i.tipo_de_incapacidad === t), i => diasEnPeriodo(i, d.del, d.al))) }], { horizontal: true });
   const tn = Object.entries(count(d.nom, n => n.tipo_de_incidencia || 'Sin tipo')).sort((a, b) => b[1] - a[1]);
   mk('cNom', 'bar', tn.map(x => x[0]), [{ label: 'Incidencias', color: '--navy', data: tn.map(x => x[1]) }], { horizontal: true, tot: d.nom.length });
   mk('cCap', 'bar', d.cap.map(c => c.planta), [
@@ -469,12 +539,18 @@ function renderSemana(d) {
   tbl('tReinc', ['Ficha', 'Nombre', 'Planta', 'Motivo', 'Faltas'],
     porEmp.filter(e => e.n > 1).sort((a, b) => b.n - a.n).map(e => [esc(e.numero_empleado), esc(e.nombre), esc(e.planta), [...e.motivos].join(', '), e.n]), [4]);
   const sup = count(d.faltas, f => up(f.supervisor));
-  tbl('tSup', ['Supervisor', 'Injust.', 'Discipl.', 'Total'], Object.entries(sup).sort((a, b) => b[1] - a[1]).map(([x, n]) => [esc(x),
-    d.faltas.filter(f => up(f.supervisor) === x && f.motivo === 'INJUSTIFICADA').length,
-    d.faltas.filter(f => up(f.supervisor) === x && f.motivo === 'DISCIPLINA').length, n]), [1, 2, 3]);
-  tbl('tIncap', ['Ficha', 'Nombre', 'Planta', 'Tipo', 'Días semana', 'Días acumulados', 'Probable alta', 'Diagnóstico'],
+  const porMot = (lista, m) => lista.filter(f => f.motivo === m).length;
+  const filasSup = Object.entries(sup).sort((a, b) => b[1] - a[1]).map(([x, n]) => {
+    const fx = d.faltas.filter(f => up(f.supervisor) === x);
+    return [esc(x), porMot(fx, 'INJUSTIFICADA'), porMot(fx, 'JUSTIFICADA'), porMot(fx, 'DISCIPLINA'), n];
+  });
+  tbl('tSup', ['Supervisor', 'Injust.', 'Justif.', 'Discipl.', 'Total'], filasSup, [1, 2, 3, 4]);
+  if (filasSup.length) $('tSup').insertAdjacentHTML('beforeend', `<tr><th>Total</th>${[porMot(d.faltas, 'INJUSTIFICADA'), porMot(d.faltas, 'JUSTIFICADA'),
+    porMot(d.faltas, 'DISCIPLINA'), d.faltas.length].map(v => `<th class="n">${v}</th>`).join('')}</tr>`);
+  tbl('tIncap', ['Ficha', 'Nombre', 'Planta', 'Tipo', 'Inicial', 'Final', 'Días de incapacidad', 'Días en el periodo', 'Días acumulados', 'Probable alta', 'Diagnóstico'],
     [...d.incap].sort((a, b) => (b.dias_acumulados || 0) - (a.dias_acumulados || 0)).map(i =>
-      [esc(i.ficha), esc(i.nombre), esc(i.planta), titulo(i.tipo_de_incapacidad), i.dias_en_la_semana ?? '', i.dias_acumulados ?? '', fdate(i.probable_alta), esc(i.diagnostico)]), [4, 5]);
+      [esc(i.ficha), esc(i.nombre), esc(i.planta), titulo(i.tipo_de_incapacidad), fdate(i.inicial), fdate(i.final), diasIncap(i) ?? '',
+        diasEnPeriodo(i, d.del, d.al), i.dias_acumulados ?? '', fdate(i.probable_alta), esc(i.diagnostico)]), [6, 7, 8]);
   tbl('tNom', ['Fecha', 'Ficha', 'Reportado por', 'Puesto', 'Área', 'Tipo', 'Descripción'],
     d.nom.map(n => [fdate(n.fecha), esc(n.ficha), esc(n.reportado_por), esc(n.puesto), esc(n.area), esc(n.tipo_de_incidencia), esc(n.descripcion)]));
   tbl('tFaltas', ['Fecha', 'Ficha', 'Nombre', 'Planta', 'Motivo', 'Supervisor', 'Notas'],
@@ -622,7 +698,7 @@ async function verSemana(id, preguntar = true) {
 async function guardar() {
   let s = resumen(actual);
   const previo = hist.semanal.find(r => r.id_semana === s.id_semana), existe = !!previo;
-  if (actual.errores.length) return alert('No se puede guardar: el archivo no coincide con el calendario de periodos.\n\n' + actual.errores.join('\n'));
+  if (actual.errores.length) return alert('No se puede guardar: el archivo tiene errores.\n\n' + actual.errores.join('\n'));
   if (!confirm(`¿Guardar el periodo ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
     `\n\nDepartamentos en este archivo: ${[...actual.secs].map(id => SECCIONES[id]).join(', ') || 'ninguno'}.` +
     (existe ? '\nEse periodo ya existe: se reemplazan esos departamentos y se conservan los demás.' : ''))) return;
@@ -691,8 +767,8 @@ function exportar() {
     ...d.faltas.map(f => [F(f.fecha_falta), f.numero_empleado, f.nombre, f.planta, titulo(f.motivo), f.supervisor, f.notas]),
   ]);
   if (tiene('incapacidades')) add('Incapacidades', [
-    ['Ficha', 'Nombre', 'Planta', 'Tipo', 'Días en la semana', 'Inicial', 'Final', 'Probable alta', 'Días acumulados', 'Diagnóstico'],
-    ...d.incap.map(i => [i.ficha, i.nombre, i.planta, titulo(i.tipo_de_incapacidad), i.dias_en_la_semana, F(i.inicial), F(i.final), F(i.probable_alta), i.dias_acumulados, i.diagnostico]),
+    ['Ficha', 'Nombre', 'Planta', 'Tipo', 'Inicial', 'Final', 'Días de incapacidad', 'Días en el periodo', 'Días acumulados', 'Probable alta', 'Diagnóstico'],
+    ...d.incap.map(i => [i.ficha, i.nombre, i.planta, titulo(i.tipo_de_incapacidad), F(i.inicial), F(i.final), diasIncap(i) ?? '', diasEnPeriodo(i, d.del, d.al), i.dias_acumulados, F(i.probable_alta), i.diagnostico]),
   ]);
   if (tiene('nomina')) add('Incidencias nómina', [
     ['Fecha', 'Ficha', 'Reportado por', 'Puesto', 'Área', 'Tipo', 'Descripción'],
@@ -748,14 +824,15 @@ function exportar() {
 
 async function load(buf) {
   try {
-    actual = parse(XLSX.read(buf, { cellDates: true }));
-    actual.periodo = periodoDeFecha(String(iso(actual.del)).slice(0, 10));
-    actual.errores = validar(actual);
+    const wb = XLSX.read(buf, { cellDates: true });
+    actual = parse(wb);
+    actual.periodo = periodoDeFecha(ymd(actual.del));
+    actual.errores = [...validarFormato(wb, actual.secs), ...validar(actual)];
     renderSemana(actual);
   } catch (e) { alert('No pude leer el archivo: ' + e.message); console.error(e); return; }
   const p = actual.periodo;
   if (actual.errores.length) {
-    $('estado').textContent = 'El archivo NO coincide con el calendario de periodos. Corrige la hoja Config o las fechas y vuelve a cargarlo.';
+    $('estado').textContent = 'El archivo tiene errores (ver avisos). No se puede guardar: corrígelos y vuelve a cargarlo.';
     $('guardar').hidden = true;
     if (SHEETS_URL) renderHist();
     return alert('Revisa el archivo antes de guardarlo:\n\n' + actual.errores.join('\n'));

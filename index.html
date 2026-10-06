@@ -547,18 +547,43 @@ function exportar() {
     ...d.nom.map(n => [F(n.fecha), n.ficha, n.reportado_por, n.puesto, n.area, n.tipo_de_incidencia, n.descripcion, n.estatus, F(n.fecha_de_solucion), n.dias_para_resolver]),
   ]);
 
+  const cp = sum(d.cap, c => c.prog), ca = sum(d.cap, c => c.asis);
+  add('Capacitación', [
+    [`Capacitación · semana ${s.semana} de ${s.anio}`],
+    [],
+    ['Asistencia de la semana'],
+    ['Planta', 'Programados', 'Asistieron', '% Asistencia'],
+    ...d.cap.map(c => [c.planta, c.prog, c.asis, P(c.prog ? c.asis / c.prog : 0)]),
+    ['Total', cp, ca, P(cp ? ca / cp : 0)],
+    [],
+    [`Programa anual de capacitación ${s.anio}`],
+    ['Cursos programados en el año', d.cursosProg],
+    ['Cursos realizados a la fecha', d.cursosReal],
+    ['Avance del programa', P(d.cursosProg ? d.cursosReal / d.cursosProg : 0)],
+  ]);
+
   const R = d.rot || [];
   if (R.length) {
     const de = t => R.filter(r => r.tabla === t);
     const anios = [...new Set(de('tasa').map(r => Number(r.anio)))].sort();
-    const aoa = [['Tipo de salida', ...anios.map(String)],
-      ...[...new Set(de('tasa').map(r => r.concepto))].map(t => [t, ...anios.map(a => P(de('tasa').find(r => r.concepto === t && Number(r.anio) === a)?.valor))])];
-    for (const [t, enc] of [['antiguedad', 'Rango de antigüedad'], ['motivo', 'Motivo de baja'], ['puesto', 'Tipo de puesto']]) {
+    const a = anios.at(-1) || s.anio;
+    const tipos = [...new Set(de('tasa').map(r => r.concepto))];
+    const tasa = (t, y) => Number(de('tasa').find(r => r.concepto === t && Number(r.anio) === y)?.valor) || 0;
+    const aoa = [
+      [`Rotación de personal ${a}`],
+      ['% de rotación = bajas ÷ promedio de colaboradores (inicio y final del año)'],
+      [],
+      [`% de rotación por tipo de salida (${anios.join(' vs ')})`],
+      ['Tipo de salida', ...anios.map(y => `Año ${y}`)],
+      ...tipos.map(t => [t, ...anios.map(y => P(tasa(t, y)))]),
+      ['Total', ...anios.map(y => P(sum(tipos, t => tasa(t, y))))],
+    ];
+    for (const [t, enc, tit] of [['antiguedad', 'Rango de antigüedad', 'por rango de antigüedad'], ['motivo', 'Motivo de baja', 'por motivo'], ['puesto', 'Tipo de puesto', 'por tipo de puesto']]) {
       const tot = sum(de(t), r => r.valor);
-      aoa.push([], [enc, 'Bajas', '% del total'], ...de(t).map(r => [r.concepto, Number(r.valor), P(tot ? r.valor / tot : 0)]), ['Total', tot]);
+      aoa.push([], [`Bajas ${a} ${tit}`], [enc, 'Bajas', '% del total'], ...de(t).map(r => [r.concepto, Number(r.valor), P(tot ? r.valor / tot : 0)]), ['Total', tot, P(tot ? 1 : 0)]);
     }
     const dias = Number(de('promedio_dias')[0]?.valor);
-    if (dias) aoa.push([], ['Antigüedad promedio al momento de la baja (días)', dias], ['Antigüedad promedio (años)', +(dias / 365).toFixed(1)]);
+    if (dias) aoa.push([], [`Antigüedad promedio al momento de la baja ${a}`], ['Días', dias], ['Años', +(dias / 365).toFixed(1)]);
     add('Rotación', aoa);
   }
   XLSX.writeFile(wb, `KPIs_RH_${s.id_semana}.xlsx`);

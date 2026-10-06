@@ -143,7 +143,7 @@ details summary { cursor: pointer; font-weight: 600; }
       <div class="card"><h2>Capacitación</h2><div class="chart"><canvas id="hCap"></canvas></div></div>
       <div class="card"><h2>Bajas por periodo</h2><div class="chart"><canvas id="hBajas"></canvas></div></div>
     </section>
-    <div class="card scroll"><h2>Periodos guardados</h2><table id="tHist"></table></div>
+    <div class="card scroll"><details><summary>Periodos guardados</summary><table id="tHist"></table></details></div>
   </div>
 </main>
 
@@ -181,7 +181,7 @@ const secId = nombre => Object.keys(SECCIONES).find(id => key(SECCIONES[id]) ===
 const CAMPOS = {
   ausentismo: ['faltas', 'injustificadas', 'justificadas', 'disciplina', 'ausentismo'],
   incapacidades: ['incapacidades', 'dias_incapacidad', 'riesgos_trabajo', 'riesgos_trayecto'],
-  nomina: ['incidencias_nomina', 'incidencias_pendientes'],
+  nomina: ['incidencias_nomina'],
   capacitacion: ['cursos_programados', 'cursos_realizados', 'avance_capacitacion', 'cap_programados', 'cap_asistieron', 'asistencia_capacitacion'],
   bajas: ['bajas', 'bajas_voluntarias', 'bajas_forzadas'],
 };
@@ -303,7 +303,7 @@ function resumen(d) {
     ausentismo: personal ? d.faltas.length / personal : '',
     incapacidades: d.incap.length, dias_incapacidad: sum(d.incap, i => i.dias_en_la_semana),
     riesgos_trabajo: tipo['RIESGO DE TRABAJO'] || 0, riesgos_trayecto: tipo['RIESGO DE TRAYECTO'] || 0,
-    incidencias_nomina: d.nom.length, incidencias_pendientes: d.nom.filter(n => up(n.estatus) !== 'RESUELTO').length,
+    incidencias_nomina: d.nom.length,
     cursos_programados: d.cursosProg, cursos_realizados: d.cursosReal, avance_capacitacion: d.cursosProg ? d.cursosReal / d.cursosProg : 0,
     cap_programados: capProg, cap_asistieron: capAsis, asistencia_capacitacion: capProg ? capAsis / capProg : 0,
     bajas: bajas.length, bajas_voluntarias: bajas.filter(b => b.clasificacion === 'VOLUNTARIA').length,
@@ -381,7 +381,7 @@ const KPIS = [
   ['Faltas injustificadas', 'injustificadas', false, false, s => `${s.justificadas} justificadas · ${s.disciplina} disciplina`],
   ['Incapacidades', 'incapacidades', false, false, s => `${s.dias_incapacidad} días en la semana`],
   ['Riesgos de trabajo', 'riesgos_trabajo', false, false, s => `+ ${s.riesgos_trayecto} de trayecto`],
-  ['Incidencias de nómina', 'incidencias_nomina', false, false, s => `${s.incidencias_pendientes} pendientes`],
+  ['Incidencias de nómina', 'incidencias_nomina', false, false, () => 'reportadas en el periodo'],
   ['Avance capacitación', 'avance_capacitacion', true, true, s => `${s.cursos_realizados} de ${s.cursos_programados} cursos`],
   ['Asistencia capacitación', 'asistencia_capacitacion', true, true, s => `${s.cap_asistieron} de ${s.cap_programados} programados`],
   ['Bajas del periodo', 'bajas', false, false, s => `${s.bajas_voluntarias} voluntarias · ${s.bajas_forzadas} forzadas`],
@@ -458,11 +458,8 @@ function renderSemana(d) {
     motivoDs(m => dias.map(x => d.faltas.filter(f => f.fecha_falta === x && f.motivo === m).length)), { stacked: true });
   const tipos = Object.keys(count(d.incap, i => i.tipo_de_incapacidad));
   mk('cIncap', 'bar', tipos.map(titulo), [{ label: 'Días', color: '--navy', data: tipos.map(t => sum(d.incap.filter(i => i.tipo_de_incapacidad === t), i => i.dias_en_la_semana)) }], { horizontal: true });
-  const tn = Object.keys(count(d.nom, n => n.tipo_de_incidencia)), res = n => up(n.estatus) === 'RESUELTO';
-  mk('cNom', 'bar', tn, [
-    { label: 'Resueltas', color: '--gris', data: tn.map(t => d.nom.filter(n => n.tipo_de_incidencia === t && res(n)).length) },
-    { label: 'Pendientes', color: '--navy', data: tn.map(t => d.nom.filter(n => n.tipo_de_incidencia === t && !res(n)).length) },
-  ], { stacked: true, horizontal: true });
+  const tn = Object.entries(count(d.nom, n => n.tipo_de_incidencia || 'Sin tipo')).sort((a, b) => b[1] - a[1]);
+  mk('cNom', 'bar', tn.map(x => x[0]), [{ label: 'Incidencias', color: '--navy', data: tn.map(x => x[1]) }], { horizontal: true, tot: d.nom.length });
   mk('cCap', 'bar', d.cap.map(c => c.planta), [
     { label: 'Programados', color: '--gris', data: d.cap.map(c => c.prog) },
     { label: 'Asistieron', color: '--navy', data: d.cap.map(c => c.asis) },
@@ -478,9 +475,8 @@ function renderSemana(d) {
   tbl('tIncap', ['Ficha', 'Nombre', 'Planta', 'Tipo', 'Días semana', 'Días acumulados', 'Probable alta', 'Diagnóstico'],
     [...d.incap].sort((a, b) => (b.dias_acumulados || 0) - (a.dias_acumulados || 0)).map(i =>
       [esc(i.ficha), esc(i.nombre), esc(i.planta), titulo(i.tipo_de_incapacidad), i.dias_en_la_semana ?? '', i.dias_acumulados ?? '', fdate(i.probable_alta), esc(i.diagnostico)]), [4, 5]);
-  tbl('tNom', ['Fecha', 'Reportado por', 'Área', 'Tipo', 'Descripción', 'Estatus', 'Días'],
-    d.nom.map(n => [fdate(n.fecha), esc(n.reportado_por), esc(n.area), esc(n.tipo_de_incidencia), esc(n.descripcion),
-      `<span class="tag ${res(n) ? 'ok' : 'pend'}">${res(n) ? '✓' : '●'} ${esc(n.estatus)}</span>`, n.dias_para_resolver ?? '']), [6]);
+  tbl('tNom', ['Fecha', 'Ficha', 'Reportado por', 'Puesto', 'Área', 'Tipo', 'Descripción'],
+    d.nom.map(n => [fdate(n.fecha), esc(n.ficha), esc(n.reportado_por), esc(n.puesto), esc(n.area), esc(n.tipo_de_incidencia), esc(n.descripcion)]));
   tbl('tFaltas', ['Fecha', 'Ficha', 'Nombre', 'Planta', 'Motivo', 'Supervisor', 'Notas'],
     d.faltas.map(f => [esc(f.fecha_falta), esc(f.numero_empleado), esc(f.nombre), esc(f.planta), titulo(f.motivo), esc(f.supervisor), esc(f.notas)]));
 
@@ -532,10 +528,7 @@ function renderHist() {
     data: ids.map(id => num(hist.plantas.find(x => x.id_semana === id && x.planta === p)?.ausentismo)) })), { pct: true });
   mk('hFaltas', 'bar', L, MOTIVOS.map(m => ({ label: titulo(m), color: COLOR_MOTIVO[m], data: S.map(r => num(r[CAMPO_MOTIVO[m]])) })), { stacked: true });
   mk('hIncap', 'bar', L, [{ label: 'Días de incapacidad', color: '--navy', data: S.map(r => num(r.dias_incapacidad)) }]);
-  mk('hNom', 'bar', L, [
-    { label: 'Total', color: '--gris', data: S.map(r => num(r.incidencias_nomina)) },
-    { label: 'Pendientes', color: '--navy', data: S.map(r => num(r.incidencias_pendientes)) },
-  ]);
+  mk('hNom', 'bar', L, [{ label: 'Incidencias', color: '--navy', data: S.map(r => num(r.incidencias_nomina)) }]);
   mk('hCap', 'line', L, [
     { label: 'Avance del programa', color: '--navy', data: S.map(r => num(r.avance_capacitacion)) },
     { label: 'Asistencia', color: '--teal', data: S.map(r => num(r.asistencia_capacitacion)) },
@@ -545,10 +538,10 @@ function renderHist() {
     { label: 'Forzadas', color: '--gris', data: S.map(r => num(r.bajas_forzadas)) },
   ], { stacked: true });
   const v = x => x === '' || x == null ? '—' : x;
-  tbl('tHist', ['Periodo', 'Del', 'Al', 'Ausentismo', 'Faltas', 'Injust.', 'Incap.', 'Días incap.', 'Riesgos', 'Inc. nómina', 'Pendientes', 'Avance cap.', 'Asist. cap.', 'Bajas'],
+  tbl('tHist', ['Periodo', 'Del', 'Al', 'Ausentismo', 'Faltas', 'Injust.', 'Incap.', 'Días incap.', 'Riesgos', 'Inc. nómina', 'Avance cap.', 'Asist. cap.', 'Bajas'],
     [...S].reverse().map(r => [esc(r.id_semana), fdate(r.del), fdate(r.al), pct(r.ausentismo), v(r.faltas), v(r.injustificadas), v(r.incapacidades),
-      v(r.dias_incapacidad), v(r.riesgos_trabajo), v(r.incidencias_nomina), v(r.incidencias_pendientes), pct(r.avance_capacitacion), pct(r.asistencia_capacitacion), v(r.bajas)]),
-    [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+      v(r.dias_incapacidad), v(r.riesgos_trabajo), v(r.incidencias_nomina), pct(r.avance_capacitacion), pct(r.asistencia_capacitacion), v(r.bajas)]),
+    [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
 }
 
 async function cargarHist() {
@@ -702,8 +695,8 @@ function exportar() {
     ...d.incap.map(i => [i.ficha, i.nombre, i.planta, titulo(i.tipo_de_incapacidad), i.dias_en_la_semana, F(i.inicial), F(i.final), F(i.probable_alta), i.dias_acumulados, i.diagnostico]),
   ]);
   if (tiene('nomina')) add('Incidencias nómina', [
-    ['Fecha', 'Ficha', 'Reportado por', 'Puesto', 'Área', 'Tipo', 'Descripción', 'Estatus', 'Fecha de solución', 'Días para resolver'],
-    ...d.nom.map(n => [F(n.fecha), n.ficha, n.reportado_por, n.puesto, n.area, n.tipo_de_incidencia, n.descripcion, n.estatus, F(n.fecha_de_solucion), n.dias_para_resolver]),
+    ['Fecha', 'Ficha', 'Reportado por', 'Puesto', 'Área', 'Tipo', 'Descripción'],
+    ...d.nom.map(n => [F(n.fecha), n.ficha, n.reportado_por, n.puesto, n.area, n.tipo_de_incidencia, n.descripcion]),
   ]);
 
   const cp = sum(d.cap, c => c.prog), ca = sum(d.cap, c => c.asis);

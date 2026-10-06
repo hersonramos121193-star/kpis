@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KPIs Recursos Humanos</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root {
+  color-scheme: light;
+  --marca-navy: #2d4c83; --marca-gris: #a6a7a8; --marca-teal: #588898;
+  --page: #f9f9f7; --surface: #fcfcfb; --border: rgba(11,11,11,.10);
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781; --grid: #e1e0d9;
+  --navy: #2d4c83; --gris: #a6a7a8; --teal: #588898;
+  --good: #006300; --bad: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --border: rgba(255,255,255,.10);
+    --ink: #fff; --ink-2: #c3c2b7; --muted: #898781; --grid: #2c2c2a;
+    --navy: #4a6db0; --gris: #a6a7a8; --teal: #7cbccb;
+    --good: #0ca30c; --bad: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --border: rgba(255,255,255,.10);
+  --ink: #fff; --ink-2: #c3c2b7; --muted: #898781; --grid: #2c2c2a;
+  --navy: #4a6db0; --gris: #a6a7a8; --teal: #7cbccb;
+  --good: #0ca30c; --bad: #e66767;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.top { background: var(--marca-navy); color: #fff; }
+.top .in { max-width: 1200px; margin: 0 auto; padding: 20px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: end; justify-content: space-between; }
+.franja { height: 6px; background: linear-gradient(90deg, var(--marca-navy) 0 33.3%, var(--marca-gris) 33.3% 66.6%, var(--marca-teal) 66.6%); }
+h1 { margin: 0; font-size: 24px; }
+h2 { margin: 0 0 12px; font-size: 15px; }
+h3 { margin: 28px 0 12px; font-size: 18px; color: var(--ink); }
+#periodo { color: #dfe6f2; }
+#aviso { color: #ffd2d2; font-size: 13px; }
+#estado { color: #dfe6f2; font-size: 13px; }
+main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { display: inline-block; padding: 8px 14px; border: 1px solid rgba(255,255,255,.5); border-radius: 8px; background: transparent; color: #fff; font: inherit; cursor: pointer; }
+.btn:hover { background: rgba(255,255,255,.12); }
+input[type=file] { display: none; }
+#drop { border: 2px dashed var(--border); border-radius: 12px; padding: 40px 16px; text-align: center; color: var(--ink-2); margin-bottom: 16px; }
+#drop.over { border-color: var(--navy); }
+.grid { display: grid; gap: 16px; }
+.kpis { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 16px; }
+.charts { grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); margin-bottom: 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+.kpi { border-top: 4px solid var(--marca-navy); }
+.kpi .v { font-size: 30px; font-weight: 600; margin: 4px 0; }
+.kpi .t { color: var(--ink-2); font-size: 13px; }
+.kpi .d { color: var(--muted); font-size: 12px; }
+.kpi .delta { font-size: 12px; margin-top: 4px; }
+.chart { position: relative; height: 260px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+th { color: var(--ink-2); font-weight: 600; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+details summary { cursor: pointer; font-weight: 600; }
+.tag { padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid currentColor; white-space: nowrap; }
+.ok { color: var(--good); } .pend { color: var(--bad); }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="top"><div class="in">
+  <div>
+    <h1>KPIs Recursos Humanos</h1>
+    <div id="periodo">Carga el archivo semanal de KPIs (.xlsx)</div>
+    <div id="aviso"></div>
+    <div id="estado"></div>
+  </div>
+  <div class="btns">
+    <label class="btn">Cargar Excel<input type="file" id="file" accept=".xlsx,.xls"></label>
+    <button class="btn" id="guardar" hidden>Guardar semana en Google Sheets</button>
+  </div>
+</div></div>
+<div class="franja"></div>
+
+<main>
+  <div id="drop">Arrastra aquí <b>KPIs_RH_Semanal.xlsx</b> o usa “Cargar Excel”.<br>
+    <small>El Excel se procesa en tu navegador. Al guardar, solo se envía a tu Google Sheet.</small></div>
+
+  <section class="grid kpis" id="kpis"></section>
+
+  <div id="semana" hidden>
+    <section class="grid charts">
+      <div class="card"><h2>Faltas por planta y motivo</h2><div class="chart"><canvas id="cPlanta"></canvas></div></div>
+      <div class="card"><h2>% Ausentismo por planta</h2><div class="chart"><canvas id="cAus"></canvas></div></div>
+      <div class="card"><h2>Faltas por día</h2><div class="chart"><canvas id="cDia"></canvas></div></div>
+      <div class="card"><h2>Días de incapacidad por tipo</h2><div class="chart"><canvas id="cIncap"></canvas></div></div>
+      <div class="card"><h2>Incidencias de nómina por tipo</h2><div class="chart"><canvas id="cNom"></canvas></div></div>
+      <div class="card"><h2>Asistencia a capacitación por planta</h2><div class="chart"><canvas id="cCap"></canvas></div></div>
+    </section>
+    <section class="grid charts">
+      <div class="card scroll"><h2>Reincidentes (2+ faltas en la semana)</h2><table id="tReinc"></table></div>
+      <div class="card scroll"><h2>Faltas por supervisor</h2><table id="tSup"></table></div>
+    </section>
+    <section class="grid">
+      <div class="card scroll"><h2>Incapacidades activas</h2><table id="tIncap"></table></div>
+      <div class="card scroll"><h2>Incidencias de nómina</h2><table id="tNom"></table></div>
+      <div class="card scroll"><details><summary>Detalle de faltas</summary><table id="tFaltas"></table></details></div>
+    </section>
+  </div>
+
+  <div id="historico" hidden>
+    <h3>Histórico semanal</h3>
+    <section class="grid charts">
+      <div class="card"><h2>% Ausentismo por planta</h2><div class="chart"><canvas id="hAus"></canvas></div></div>
+      <div class="card"><h2>Faltas por motivo</h2><div class="chart"><canvas id="hFaltas"></canvas></div></div>
+      <div class="card"><h2>Días de incapacidad</h2><div class="chart"><canvas id="hIncap"></canvas></div></div>
+      <div class="card"><h2>Incidencias de nómina</h2><div class="chart"><canvas id="hNom"></canvas></div></div>
+      <div class="card"><h2>Capacitación</h2><div class="chart"><canvas id="hCap"></canvas></div></div>
+    </section>
+    <div class="card scroll"><h2>Semanas guardadas</h2><table id="tHist"></table></div>
+  </div>
+</main>
+
+<script>
+// Pega aquí la URL de tu app web de Apps Script (termina en /exec). Vacío = sin histórico.
+const SHEETS_URL = '';
+
+const $ = id => document.getElementById(id);
+const key = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_');
+const up = s => String(s ?? '').trim().toUpperCase();
+const pct = x => isFinite(x) && x !== '' && x !== null ? (x * 100).toFixed(1) + '%' : '—';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const iso = d => d instanceof Date ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : (d ?? '');
+const fdate = d => { const s = String(iso(d)).slice(0, 10); return /^\d{4}-\d\d-\d\d$/.test(s) ? new Date(s + 'T12:00').toLocaleDateString('es-MX', { day: 'numeric', month: 'short' }) : esc(s); };
+const sum = (a, f) => a.reduce((s, x) => s + (Number(f(x)) || 0), 0);
+const count = (a, f) => a.reduce((m, x) => (m[f(x)] = (m[f(x)] || 0) + 1, m), {});
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const titulo = m => m ? m[0] + m.slice(1).toLowerCase() : '';
+const plain = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v instanceof Date ? iso(v) : v]));
+const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+                set: (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+
+// Motivos en orden de apilado; el color sigue al motivo (gris|navy|teal es el orden que pasa la validación de daltonismo).
+const MOTIVOS = ['JUSTIFICADA', 'INJUSTIFICADA', 'DISCIPLINA'];
+const COLOR_MOTIVO = { JUSTIFICADA: '--gris', INJUSTIFICADA: '--navy', DISCIPLINA: '--teal' };
+const CAMPO_MOTIVO = { JUSTIFICADA: 'justificadas', INJUSTIFICADA: 'injustificadas', DISCIPLINA: 'disciplina' };
+const COLOR_PLANTA =['--navy', '--gris', '--teal']; // ponytail: 3 colores de marca; una 4a planta sale en gris tenue
+
+// Tabla de una hoja: busca la fila cuyo primer valor es `first`, lee hasta la primera fila con columna A vacía.
+function table(wb, sheet, first) {
+  const ws = wb.Sheets[sheet];
+  if (!ws) throw new Error(`Falta la hoja "${sheet}"`);
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: true });
+  const i = rows.findIndex(r => key(r[0]) === key(first));
+  if (i < 0) throw new Error(`No encontré la tabla "${first}" en "${sheet}"`);
+  const h = rows[i].map(key), out = [];
+  for (const r of rows.slice(i + 1)) {
+    if (r[0] === null || r[0] === '') break;
+    out.push(Object.fromEntries(h.map((k, j) => [k, typeof r[j] === 'string' ? r[j].trim() : r[j]])));
+  }
+  return { rows, out };
+}
+const cell = (rows, label) => (rows.find(r => key(r[0]).startsWith(key(label))) || []).slice(1).find(v => v !== null);
+
+function parse(wb) {
+  const cfg = table(wb, 'Config', 'Planta');
+  const cap = table(wb, 'Capacitacion', 'Planta');
+  return {
+    semana: Number(cell(cfg.rows, 'Semana')), del: cell(cfg.rows, 'Del'), al: cell(cfg.rows, 'Al'),
+    plantas: cfg.out.map(r => ({ planta: up(r.planta), personal: Number(r.personal_en_planta) || 0 })),
+    faltas: table(wb, 'Ausentismo', 'Numero_Empleado').out.map(r => ({ ...r, fecha_falta: String(iso(r.fecha_falta)).slice(0, 10), planta: up(r.planta), motivo: up(r.motivo) })),
+    incap: table(wb, 'Incapacidades', 'Ficha').out.map(r => ({ ...r, planta: up(r.planta), tipo_de_incapacidad: up(r.tipo_de_incapacidad) })),
+    nom: table(wb, 'Incidencias_Nomina', 'Fecha').out,
+    cap: cap.out.map(r => ({ planta: up(r.planta), prog: Number(r.programados) || 0, asis: Number(r.asistieron) || 0 })),
+    cursosProg: Number(cell(cap.rows, 'Cursos programados')) || 0,
+    cursosReal: Number(cell(cap.rows, 'Cursos realizados')) || 0,
+  };
+}
+
+// Fila del histórico semanal (misma forma que devuelve Google Sheets).
+function resumen(d) {
+  const personal = sum(d.plantas, p => p.personal);
+  const mot = count(d.faltas, f => f.motivo), tipo = count(d.incap, i => i.tipo_de_incapacidad);
+  const capProg = sum(d.cap, c => c.prog), capAsis = sum(d.cap, c => c.asis);
+  const anio = d.del instanceof Date ? d.del.getFullYear() : Number(String(d.faltas[0]?.fecha_falta).slice(0, 4)) || new Date().getFullYear();
+  return {
+    id_semana: `${anio}-S${String(d.semana).padStart(2, '0')}`, anio, semana: d.semana, del: iso(d.del), al: iso(d.al),
+    personal, faltas: d.faltas.length,
+    injustificadas: mot.INJUSTIFICADA || 0, justificadas: mot.JUSTIFICADA || 0, disciplina: mot.DISCIPLINA || 0,
+    ausentismo: personal ? d.faltas.length / personal : 0,
+    incapacidades: d.incap.length, dias_incapacidad: sum(d.incap, i => i.dias_en_la_semana),
+    riesgos_trabajo: tipo['RIESGO DE TRABAJO'] || 0, riesgos_trayecto: tipo['RIESGO DE TRAYECTO'] || 0,
+    incidencias_nomina: d.nom.length, incidencias_pendientes: d.nom.filter(n => up(n.estatus) !== 'RESUELTO').length,
+    cursos_programados: d.cursosProg, cursos_realizados: d.cursosReal, avance_capacitacion: d.cursosProg ? d.cursosReal / d.cursosProg : 0,
+    cap_programados: capProg, cap_asistieron: capAsis, asistencia_capacitacion: capProg ? capAsis / capProg : 0,
+  };
+}
+
+function porPlanta(d, s) {
+  return d.plantas.map(p => {
+    const f = d.faltas.filter(x => x.planta === p.planta), inc = d.incap.filter(x => x.planta === p.planta);
+    const c = d.cap.find(x => x.planta === p.planta) || { prog: 0, asis: 0 };
+    return {
+      id_semana: s.id_semana, anio: s.anio, semana: s.semana, planta: p.planta, personal: p.personal, faltas: f.length,
+      injustificadas: f.filter(x => x.motivo === 'INJUSTIFICADA').length, justificadas: f.filter(x => x.motivo === 'JUSTIFICADA').length,
+      disciplina: f.filter(x => x.motivo === 'DISCIPLINA').length, ausentismo: p.personal ? f.length / p.personal : 0,
+      incapacidades: inc.length, dias_incapacidad: sum(inc, x => x.dias_en_la_semana), cap_programados: c.prog, cap_asistieron: c.asis,
+    };
+  });
+}
+
+// ---------- Gráficas ----------
+const charts = {};
+function mk(id, type, labels, datasets, o = {}) {
+  charts[id]?.destroy();
+  Chart.defaults.color = css('--ink-2');
+  Chart.defaults.borderColor = css('--grid');
+  Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+  const fmt = o.pct ? { callback: v => pct(v) } : { precision: 0 };
+  datasets = datasets.map(ds => type === 'line'
+    ? { borderColor: css(ds.color) || css('--muted'), backgroundColor: css(ds.color) || css('--muted'), borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, spanGaps: true, ...ds }
+    : { backgroundColor: css(ds.color) || css('--muted'), borderRadius: 4, borderSkipped: 'start', borderColor: css('--surface'), borderWidth: { right: 2, top: 2 }, maxBarThickness: 36, ...ds });
+  charts[id] = new Chart($(id), {
+    type, data: { labels, datasets },
+    options: {
+      maintainAspectRatio: false, indexAxis: o.horizontal ? 'y' : 'x',
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: datasets.length > 1, position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } },
+        tooltip: o.pct ? { callbacks: { label: c => `${c.dataset.label || ''}: ${pct(c.raw)}` } } : {},
+      },
+      scales: {
+        x: { stacked: o.stacked, grid: { display: !!o.horizontal }, beginAtZero: true, ticks: o.horizontal ? fmt : {} },
+        y: { stacked: o.stacked, grid: { display: !o.horizontal }, beginAtZero: true, ticks: o.horizontal ? {} : fmt },
+      },
+    },
+  });
+}
+
+function tbl(id, head, rows, num = []) {
+  $(id).innerHTML = `<tr>${head.map((h, j) => `<th${num.includes(j) ? ' class="n"' : ''}>${h}</th>`).join('')}</tr>` +
+    (rows.length ? rows.map(r => `<tr>${r.map((v, j) => `<td${num.includes(j) ? ' class="n"' : ''}>${v}</td>`).join('')}</tr>`).join('')
+      : `<tr><td colspan="${head.length}">Sin registros</td></tr>`);
+}
+
+// ---------- Indicadores (salen de una fila del histórico: del Excel o de Sheets) ----------
+function renderKpis(s, prev) {
+  $('periodo').textContent = `Semana ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)} · ${s.personal} personas en planta`;
+  const k = [
+    ['Ausentismo semanal', 'ausentismo', true, false, `${s.faltas} faltas / ${s.personal} personas`],
+    ['Faltas injustificadas', 'injustificadas', false, false, `${s.justificadas} justificadas · ${s.disciplina} disciplina`],
+    ['Incapacidades', 'incapacidades', false, false, `${s.dias_incapacidad} días en la semana`],
+    ['Riesgos de trabajo', 'riesgos_trabajo', false, false, `+ ${s.riesgos_trayecto} de trayecto`],
+    ['Incidencias de nómina', 'incidencias_nomina', false, false, `${s.incidencias_pendientes} pendientes`],
+    ['Avance capacitación', 'avance_capacitacion', true, true, `${s.cursos_realizados} de ${s.cursos_programados} cursos`],
+    ['Asistencia capacitación', 'asistencia_capacitacion', true, true, `${s.cap_asistieron} de ${s.cap_programados} programados`],
+  ];
+  $('kpis').innerHTML = k.map(([t, f, esPct, subirEsBueno, sub]) => {
+    let delta = '';
+    if (prev && prev[f] !== '' && prev[f] != null) {
+      const dlt = Number(s[f]) - Number(prev[f]);
+      const txt = esPct ? `${Math.abs(dlt * 100).toFixed(1)} pts` : Math.abs(dlt);
+      delta = dlt === 0 ? `<div class="delta" style="color:var(--muted)">= igual que S${prev.semana}</div>`
+        : `<div class="delta ${(dlt > 0) === subirEsBueno ? 'ok' : 'pend'}">${dlt > 0 ? '▲' : '▼'} ${txt} vs S${prev.semana}</div>`;
+    }
+    return `<div class="card kpi"><div class="t">${t}</div><div class="v">${esPct ? pct(s[f]) : s[f]}</div><div class="d">${sub}</div>${delta}</div>`;
+  }).join('');
+}
+
+// ---------- Semana cargada desde Excel ----------
+let actual = null, hist = { semanal: [], plantas: [] };
+const anterior = id => hist.semanal.filter(r => r.id_semana < id).at(-1);
+
+function renderSemana(d) {
+  const s = resumen(d);
+  renderKpis(s, anterior(s.id_semana));
+  const fechas = d.faltas.map(f => f.fecha_falta).sort();
+  $('aviso').textContent = fechas.length && s.del && (fechas[0] < s.del || fechas.at(-1) > s.al)
+    ? `Ojo: las faltas van del ${fechas[0]} al ${fechas.at(-1)} y no coinciden con las fechas de la hoja Config.` : '';
+
+  const P = d.plantas.map(p => p.planta);
+  const motivoDs = fn => MOTIVOS.map(m => ({ label: titulo(m), color: COLOR_MOTIVO[m], data: fn(m) }));
+  mk('cPlanta', 'bar', P, motivoDs(m => P.map(p => d.faltas.filter(f => f.planta === p && f.motivo === m).length)), { stacked: true, horizontal: true });
+  mk('cAus', 'bar', P, [{ label: 'Ausentismo', color: '--navy', data: porPlanta(d, s).map(p => p.ausentismo) }], { pct: true });
+  const dias = [...new Set(fechas)];
+  mk('cDia', 'bar', dias.map(x => new Date(x + 'T12:00').toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric' })),
+    motivoDs(m => dias.map(x => d.faltas.filter(f => f.fecha_falta === x && f.motivo === m).length)), { stacked: true });
+  const tipos = Object.keys(count(d.incap, i => i.tipo_de_incapacidad));
+  mk('cIncap', 'bar', tipos.map(titulo), [{ label: 'Días', color: '--navy', data: tipos.map(t => sum(d.incap.filter(i => i.tipo_de_incapacidad === t), i => i.dias_en_la_semana)) }], { horizontal: true });
+  const tn = Object.keys(count(d.nom, n => n.tipo_de_incidencia)), res = n => up(n.estatus) === 'RESUELTO';
+  mk('cNom', 'bar', tn, [
+    { label: 'Resueltas', color: '--gris', data: tn.map(t => d.nom.filter(n => n.tipo_de_incidencia === t && res(n)).length) },
+    { label: 'Pendientes', color: '--navy', data: tn.map(t => d.nom.filter(n => n.tipo_de_incidencia === t && !res(n)).length) },
+  ], { stacked: true, horizontal: true });
+  mk('cCap', 'bar', d.cap.map(c => c.planta), [
+    { label: 'Programados', color: '--gris', data: d.cap.map(c => c.prog) },
+    { label: 'Asistieron', color: '--navy', data: d.cap.map(c => c.asis) },
+  ]);
+
+  const porEmp = Object.values(d.faltas.reduce((m, f) => ((m[f.numero_empleado] ??= { ...f, n: 0, motivos: new Set() }).n++, m[f.numero_empleado].motivos.add(titulo(f.motivo)), m), {}));
+  tbl('tReinc', ['Ficha', 'Nombre', 'Planta', 'Motivo', 'Faltas'],
+    porEmp.filter(e => e.n > 1).sort((a, b) => b.n - a.n).map(e => [esc(e.numero_empleado), esc(e.nombre), esc(e.planta), [...e.motivos].join(', '), e.n]), [4]);
+  const sup = count(d.faltas, f => up(f.supervisor));
+  tbl('tSup', ['Supervisor', 'Injust.', 'Discipl.', 'Total'], Object.entries(sup).sort((a, b) => b[1] - a[1]).map(([x, n]) => [esc(x),
+    d.faltas.filter(f => up(f.supervisor) === x && f.motivo === 'INJUSTIFICADA').length,
+    d.faltas.filter(f => up(f.supervisor) === x && f.motivo === 'DISCIPLINA').length, n]), [1, 2, 3]);
+  tbl('tIncap', ['Ficha', 'Nombre', 'Planta', 'Tipo', 'Días semana', 'Días acumulados', 'Probable alta', 'Diagnóstico'],
+    [...d.incap].sort((a, b) => (b.dias_acumulados || 0) - (a.dias_acumulados || 0)).map(i =>
+      [esc(i.ficha), esc(i.nombre), esc(i.planta), titulo(i.tipo_de_incapacidad), i.dias_en_la_semana ?? '', i.dias_acumulados ?? '', fdate(i.probable_alta), esc(i.diagnostico)]), [4, 5]);
+  tbl('tNom', ['Fecha', 'Reportado por', 'Área', 'Tipo', 'Descripción', 'Estatus', 'Días'],
+    d.nom.map(n => [fdate(n.fecha), esc(n.reportado_por), esc(n.area), esc(n.tipo_de_incidencia), esc(n.descripcion),
+      `<span class="tag ${res(n) ? 'ok' : 'pend'}">${res(n) ? '✓' : '●'} ${esc(n.estatus)}</span>`, n.dias_para_resolver ?? '']), [6]);
+  tbl('tFaltas', ['Fecha', 'Ficha', 'Nombre', 'Planta', 'Motivo', 'Supervisor', 'Notas'],
+    d.faltas.map(f => [esc(f.fecha_falta), esc(f.numero_empleado), esc(f.nombre), esc(f.planta), titulo(f.motivo), esc(f.supervisor), esc(f.notas)]));
+
+  $('drop').hidden = true; $('semana').hidden = false;
+}
+
+// ---------- Histórico (Google Sheets) ----------
+function renderHist() {
+  const S = [...hist.semanal].sort((a, b) => String(a.id_semana).localeCompare(b.id_semana));
+  hist.semanal = S;
+  $('historico').hidden = !S.length;
+  if (!S.length) return;
+  const varios = new Set(S.map(r => r.anio)).size > 1;
+  const L = S.map(r => varios ? `S${r.semana}·${String(r.anio).slice(2)}` : `S${r.semana}`);
+  const ids = S.map(r => r.id_semana);
+  const plantas = [...new Set(hist.plantas.map(p => p.planta))].sort();
+  mk('hAus', 'line', L, plantas.map((p, i) => ({ label: p, color: COLOR_PLANTA[i],
+    data: ids.map(id => hist.plantas.find(x => x.id_semana === id && x.planta === p)?.ausentismo ?? null) })), { pct: true });
+  mk('hFaltas', 'bar', L, MOTIVOS.map(m => ({ label: titulo(m), color: COLOR_MOTIVO[m], data: S.map(r => r[CAMPO_MOTIVO[m]]) })), { stacked: true });
+  mk('hIncap', 'bar', L, [{ label: 'Días de incapacidad', color: '--navy', data: S.map(r => r.dias_incapacidad) }]);
+  mk('hNom', 'bar', L, [
+    { label: 'Total', color: '--gris', data: S.map(r => r.incidencias_nomina) },
+    { label: 'Pendientes', color: '--navy', data: S.map(r => r.incidencias_pendientes) },
+  ]);
+  mk('hCap', 'line', L, [
+    { label: 'Avance del programa', color: '--navy', data: S.map(r => r.avance_capacitacion) },
+    { label: 'Asistencia', color: '--teal', data: S.map(r => r.asistencia_capacitacion) },
+  ], { pct: true });
+  tbl('tHist', ['Semana', 'Del', 'Al', 'Ausentismo', 'Faltas', 'Injust.', 'Incap.', 'Días incap.', 'Riesgos', 'Inc. nómina', 'Pendientes', 'Avance cap.', 'Asist. cap.'],
+    [...S].reverse().map(r => [esc(r.id_semana), fdate(r.del), fdate(r.al), pct(r.ausentismo), r.faltas, r.injustificadas, r.incapacidades,
+      r.dias_incapacidad, r.riesgos_trabajo, r.incidencias_nomina, r.incidencias_pendientes, pct(r.avance_capacitacion), pct(r.asistencia_capacitacion)]),
+    [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+}
+
+async function cargarHist() {
+  if (!SHEETS_URL) return;
+  try {
+    $('estado').textContent = 'Leyendo histórico de Google Sheets…';
+    hist = await (await fetch(SHEETS_URL)).json();
+    $('estado').textContent = `Histórico: ${hist.semanal.length} semana(s) guardada(s).`;
+    renderHist();
+    if (actual) renderKpis(resumen(actual), anterior(resumen(actual).id_semana));
+    else if (hist.semanal.length) renderKpis(hist.semanal.at(-1), hist.semanal.at(-2));
+  } catch (e) { $('estado').textContent = 'No pude leer el histórico de Google Sheets.'; console.error(e); }
+}
+
+async function guardar() {
+  const s = resumen(actual);
+  const existe = hist.semanal.some(r => r.id_semana === s.id_semana);
+  if (!confirm(`¿Guardar la semana ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
+    (existe ? '\n\nEsa semana ya existe y se va a REEMPLAZAR.' : ''))) return;
+  let clave = store.get('kpis_clave') || prompt('Clave para guardar (la configuraste en Apps Script):');
+  if (!clave) return;
+  const tablas = {
+    Historico_Semanal: [s],
+    Historico_Plantas: porPlanta(actual, s),
+    Faltas: actual.faltas.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
+    Incapacidades: actual.incap.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
+    Incidencias_Nomina: actual.nom.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
+  };
+  $('estado').textContent = 'Guardando en Google Sheets…';
+  try {
+    const r = await (await fetch(SHEETS_URL, { method: 'POST', body: JSON.stringify({ clave, id_semana: s.id_semana, tablas }) })).json();
+    if (!r.ok) {
+      if (r.error === 'Clave incorrecta') store.set('kpis_clave', null);
+      throw new Error(r.error);
+    }
+    store.set('kpis_clave', clave);
+    $('estado').textContent = `Semana ${s.id_semana} guardada.`;
+    await cargarHist();
+  } catch (e) { $('estado').textContent = 'No se guardó: ' + e.message; alert('No se guardó: ' + e.message); }
+}
+
+async function load(buf) {
+  try { actual = parse(XLSX.read(buf, { cellDates: true })); renderSemana(actual); }
+  catch (e) { alert('No pude leer el archivo: ' + e.message); console.error(e); return; }
+  if (SHEETS_URL) { $('guardar').hidden = false; guardar(); }
+}
+
+$('file').onchange = e => { e.target.files[0]?.arrayBuffer().then(load); e.target.value = ''; };
+$('guardar').onclick = guardar;
+['dragover', 'dragleave', 'drop'].forEach(t => document.addEventListener(t, e => {
+  e.preventDefault();
+  $('drop').classList.toggle('over', t === 'dragover');
+  if (t === 'drop' && e.dataTransfer.files[0]) e.dataTransfer.files[0].arrayBuffer().then(load);
+}));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (actual) renderSemana(actual); renderHist(); });
+cargarHist();
+</script>
+</body>
+</html>

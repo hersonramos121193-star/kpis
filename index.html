@@ -175,7 +175,7 @@ const COLOR_PLANTA = ['--navy', '--gris', '--teal']; // ponytail: 3 colores de m
 // Departamentos (secciones). Un archivo dice en Config cuáles trae; lo que no traiga se conserva de lo ya guardado.
 const SECCIONES = { ausentismo: 'Ausentismo', incapacidades: 'Incapacidades', nomina: 'Incidencias de nómina', capacitacion: 'Capacitación', rotacion: 'Rotación', bajas: 'Bajas' };
 const SECS_ANTES = 'ausentismo,incapacidades,nomina,capacitacion,rotacion'; // periodos guardados antes de existir "secciones"
-const secsDe = r => new Set(String(r?.secciones ?? SECS_ANTES).split(',').filter(Boolean));
+const secsDe = r => new Set(String(r?.secciones || SECS_ANTES).split(',').filter(Boolean)); // vacío = guardado antes de existir la columna
 const secId = nombre => Object.keys(SECCIONES).find(id => key(SECCIONES[id]) === key(nombre));
 // Campos del resumen que pertenecen a cada sección (quedan vacíos si la sección no se reportó).
 const CAMPOS = {

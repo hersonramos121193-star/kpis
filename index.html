@@ -47,6 +47,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 48px; }
 .btn { display: inline-block; padding: 8px 14px; border: 1px solid rgba(255,255,255,.5); border-radius: 8px; background: transparent; color: #fff; font: inherit; cursor: pointer; }
 .btn:hover { background: rgba(255,255,255,.12); }
 input[type=file] { display: none; }
+select.btn option { color: #0b0b0b; background: #fff; }
 #drop { border: 2px dashed var(--border); border-radius: 12px; padding: 40px 16px; text-align: center; color: var(--ink-2); margin-bottom: 16px; }
 #drop.over { border-color: var(--navy); }
 .grid { display: grid; gap: 16px; }
@@ -80,6 +81,7 @@ details summary { cursor: pointer; font-weight: 600; }
   </div>
   <div class="btns">
     <label class="btn">Cargar Excel<input type="file" id="file" accept=".xlsx,.xls"></label>
+    <select class="btn" id="sel" hidden aria-label="Semana a mostrar"></select>
     <button class="btn" id="guardar" hidden>Guardar semana en Google Sheets</button>
   </div>
 </div></div>
@@ -185,7 +187,7 @@ function resumen(d) {
   const personal = sum(d.plantas, p => p.personal);
   const mot = count(d.faltas, f => f.motivo), tipo = count(d.incap, i => i.tipo_de_incapacidad);
   const capProg = sum(d.cap, c => c.prog), capAsis = sum(d.cap, c => c.asis);
-  const anio = d.del instanceof Date ? d.del.getFullYear() : Number(String(d.faltas[0]?.fecha_falta).slice(0, 4)) || new Date().getFullYear();
+  const anio = d.anio ?? (d.del instanceof Date ? d.del.getFullYear() : Number(String(d.faltas[0]?.fecha_falta).slice(0, 4)) || new Date().getFullYear());
   return {
     id_semana: `${anio}-S${String(d.semana).padStart(2, '0')}`, anio, semana: d.semana, del: iso(d.del), al: iso(d.al),
     personal, faltas: d.faltas.length,
@@ -271,10 +273,11 @@ function renderKpis(s, prev) {
 }
 
 // ---------- Semana cargada desde Excel ----------
-let actual = null, hist = { semanal: [], plantas: [] };
+let actual = null, vista = null, hist = { semanal: [], plantas: [] };
 const anterior = id => hist.semanal.filter(r => r.id_semana < id).at(-1);
 
 function renderSemana(d) {
+  vista = d;
   const s = resumen(d);
   renderKpis(s, anterior(s.id_semana));
   const fechas = d.faltas.map(f => f.fecha_falta).sort();
@@ -323,6 +326,11 @@ function renderSemana(d) {
 function renderHist() {
   const S = [...hist.semanal].sort((a, b) => String(a.id_semana).localeCompare(b.id_semana));
   hist.semanal = S;
+  const ids0 = [...S].reverse().map(r => r.id_semana), sa = actual && resumen(actual);
+  $('sel').innerHTML = (sa && !ids0.includes(sa.id_semana) ? `<option value="${sa.id_semana}">Semana ${sa.semana} · ${sa.anio} (Excel sin guardar)</option>` : '') +
+    [...S].reverse().map(r => `<option value="${esc(r.id_semana)}">Semana ${r.semana} · ${r.anio} (${fdate(r.del)} – ${fdate(r.al)})</option>`).join('');
+  if (vista) $('sel').value = resumen(vista).id_semana;
+  $('sel').hidden = !$('sel').options.length;
   $('historico').hidden = !S.length;
   if (!S.length) return;
   const varios = new Set(S.map(r => r.anio)).size > 1;
@@ -354,9 +362,47 @@ async function cargarHist() {
     hist = await (await fetch(SHEETS_URL)).json();
     $('estado').textContent = `Histórico: ${hist.semanal.length} semana(s) guardada(s).`;
     renderHist();
-    if (actual) renderKpis(resumen(actual), anterior(resumen(actual).id_semana));
-    else if (hist.semanal.length) renderKpis(hist.semanal.at(-1), hist.semanal.at(-2));
+    if (vista) renderKpis(resumen(vista), anterior(resumen(vista).id_semana));
+    else if (hist.semanal.length) verSemana(hist.semanal.at(-1).id_semana, false);
   } catch (e) { $('estado').textContent = 'No pude leer el histórico de Google Sheets.'; console.error(e); }
+}
+
+const pedirClave = preguntar => store.get('kpis_clave') || (preguntar ? prompt('Clave de Google Sheets (la configuraste en Apps Script):') : null);
+async function enviar(body) {
+  const r = await (await fetch(SHEETS_URL, { method: 'POST', body: JSON.stringify(body) })).json();
+  if (!r.ok) {
+    if (r.error === 'Clave incorrecta') store.set('kpis_clave', null);
+    throw new Error(r.error);
+  }
+  store.set('kpis_clave', body.clave);
+  return r;
+}
+
+// Muestra una semana guardada: totales del histórico + detalle (con clave) desde Google Sheets.
+async function verSemana(id, preguntar = true) {
+  if (actual && resumen(actual).id_semana === id) { renderSemana(actual); $('estado').textContent = `Viendo semana ${id} (Excel cargado).`; return; }
+  const s = hist.semanal.find(r => r.id_semana === id);
+  if (!s) return;
+  renderKpis(s, anterior(id));
+  $('aviso').textContent = '';
+  $('drop').hidden = true;
+  const clave = pedirClave(preguntar);
+  if (!clave) { $('semana').hidden = true; $('estado').textContent = 'Elige la semana otra vez y escribe la clave para ver gráficas y tablas.'; return; }
+  $('estado').textContent = `Cargando semana ${id}…`;
+  try {
+    const r = await enviar({ clave, accion: 'detalle', id_semana: id });
+    if ($('sel').value !== id) return; // el usuario ya eligió otra
+    const P = hist.plantas.filter(p => p.id_semana === id);
+    renderSemana({
+      anio: s.anio, semana: s.semana, del: s.del, al: s.al,
+      plantas: P.map(p => ({ planta: p.planta, personal: Number(p.personal) || 0 })),
+      faltas: r.faltas.map(f => ({ ...f, fecha_falta: String(f.fecha_falta).slice(0, 10) })),
+      incap: r.incapacidades, nom: r.incidencias,
+      cap: P.map(p => ({ planta: p.planta, prog: Number(p.cap_programados) || 0, asis: Number(p.cap_asistieron) || 0 })),
+      cursosProg: Number(s.cursos_programados) || 0, cursosReal: Number(s.cursos_realizados) || 0,
+    });
+    $('estado').textContent = `Viendo semana ${id} (desde Google Sheets).`;
+  } catch (e) { $('semana').hidden = true; $('estado').textContent = 'No pude cargar el detalle: ' + e.message; }
 }
 
 async function guardar() {
@@ -364,7 +410,7 @@ async function guardar() {
   const existe = hist.semanal.some(r => r.id_semana === s.id_semana);
   if (!confirm(`¿Guardar la semana ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
     (existe ? '\n\nEsa semana ya existe y se va a REEMPLAZAR.' : ''))) return;
-  let clave = store.get('kpis_clave') || prompt('Clave para guardar (la configuraste en Apps Script):');
+  const clave = pedirClave(true);
   if (!clave) return;
   const tablas = {
     Historico_Semanal: [s],
@@ -375,12 +421,7 @@ async function guardar() {
   };
   $('estado').textContent = 'Guardando en Google Sheets…';
   try {
-    const r = await (await fetch(SHEETS_URL, { method: 'POST', body: JSON.stringify({ clave, id_semana: s.id_semana, tablas }) })).json();
-    if (!r.ok) {
-      if (r.error === 'Clave incorrecta') store.set('kpis_clave', null);
-      throw new Error(r.error);
-    }
-    store.set('kpis_clave', clave);
+    await enviar({ clave, id_semana: s.id_semana, tablas });
     $('estado').textContent = `Semana ${s.id_semana} guardada.`;
     await cargarHist();
   } catch (e) { $('estado').textContent = 'No se guardó: ' + e.message; alert('No se guardó: ' + e.message); }
@@ -389,9 +430,10 @@ async function guardar() {
 async function load(buf) {
   try { actual = parse(XLSX.read(buf, { cellDates: true })); renderSemana(actual); }
   catch (e) { alert('No pude leer el archivo: ' + e.message); console.error(e); return; }
-  if (SHEETS_URL) { $('guardar').hidden = false; guardar(); }
+  if (SHEETS_URL) { renderHist(); $('guardar').hidden = false; guardar(); }
 }
 
+$('sel').onchange = e => verSemana(e.target.value);
 $('file').onchange = e => { e.target.files[0]?.arrayBuffer().then(load); e.target.value = ''; };
 $('guardar').onclick = guardar;
 ['dragover', 'dragleave', 'drop'].forEach(t => document.addEventListener(t, e => {
@@ -399,7 +441,7 @@ $('guardar').onclick = guardar;
   $('drop').classList.toggle('over', t === 'dragover');
   if (t === 'drop' && e.dataTransfer.files[0]) e.dataTransfer.files[0].arrayBuffer().then(load);
 }));
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (actual) renderSemana(actual); renderHist(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (vista) renderSemana(vista); renderHist(); });
 cargarHist();
 </script>
 </body>

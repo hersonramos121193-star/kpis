@@ -113,6 +113,17 @@ details summary { cursor: pointer; font-weight: 600; }
     </section>
   </div>
 
+  <div id="rotacion" hidden>
+    <h3 id="rotTitulo">Rotación de personal</h3>
+    <section class="grid kpis" id="kpisRot"></section>
+    <section class="grid charts">
+      <div class="card"><h2>% Rotación por tipo de salida</h2><div class="chart"><canvas id="rTasa"></canvas></div></div>
+      <div class="card"><h2>Bajas por antigüedad</h2><div class="chart"><canvas id="rAntig"></canvas></div></div>
+      <div class="card"><h2>Bajas por motivo</h2><div class="chart"><canvas id="rMotivo"></canvas></div></div>
+      <div class="card"><h2>Bajas por tipo de puesto</h2><div class="chart"><canvas id="rPuesto"></canvas></div></div>
+    </section>
+  </div>
+
   <div id="historico" hidden>
     <h3>Histórico semanal</h3>
     <section class="grid charts">
@@ -179,7 +190,24 @@ function parse(wb) {
     cap: cap.out.map(r => ({ planta: up(r.planta), prog: Number(r.programados) || 0, asis: Number(r.asistieron) || 0 })),
     cursosProg: Number(cell(cap.rows, 'Cursos programados')) || 0,
     cursosReal: Number(cell(cap.rows, 'Cursos realizados')) || 0,
+    rot: parseRot(wb),
   };
+}
+
+// Hoja Rotacion (opcional) en formato largo: { tabla, concepto, anio, valor }.
+function parseRot(wb) {
+  if (!wb.Sheets.Rotacion) return [];
+  const t = table(wb, 'Rotacion', 'Tipo de salida');
+  const anios = Object.keys(t.out[0] || {}).filter(k => /^\d{4}$/.test(k)).sort();
+  const anio = Number(anios.at(-1));
+  const out = t.out.filter(r => key(r.tipo_de_salida) !== 'total')
+    .flatMap(r => anios.map(a => ({ tabla: 'tasa', concepto: r.tipo_de_salida, anio: Number(a), valor: Number(r[a]) || 0 })));
+  for (const [tabla, first] of [['antiguedad', 'Rango de antigüedad'], ['motivo', 'Motivo de baja'], ['puesto', 'Tipo de puesto']])
+    for (const r of table(wb, 'Rotacion', first).out)
+      if (key(r[key(first)]) !== 'total') out.push({ tabla, concepto: String(r[key(first)]), anio, valor: Number(r.bajas) || 0 });
+  const dias = Number(cell(t.rows, 'Antigüedad promedio al momento'));
+  if (dias) out.push({ tabla: 'promedio_dias', concepto: 'Antigüedad promedio al momento de la baja', anio, valor: dias });
+  return out;
 }
 
 // Fila del histórico semanal (misma forma que devuelve Google Sheets).
@@ -232,7 +260,8 @@ function mk(id, type, labels, datasets, o = {}) {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: datasets.length > 1, position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } },
-        tooltip: o.pct ? { callbacks: { label: c => `${c.dataset.label || ''}: ${pct(c.raw)}` } } : {},
+        tooltip: o.pct ? { callbacks: { label: c => `${c.dataset.label || ''}: ${pct(c.raw)}` } }
+          : o.tot ? { callbacks: { label: c => `${c.dataset.label || ''}: ${c.raw} (${pct(c.raw / o.tot)})` } } : {},
       },
       scales: {
         x: { stacked: o.stacked, grid: { display: !!o.horizontal }, beginAtZero: true, ticks: o.horizontal ? fmt : {} },
@@ -249,6 +278,14 @@ function tbl(id, head, rows, num = []) {
 }
 
 // ---------- Indicadores (salen de una fila del histórico: del Excel o de Sheets) ----------
+const tile = (t, v, sub, delta = '') => `<div class="card kpi"><div class="t">${t}</div><div class="v">${v}</div><div class="d">${sub}</div>${delta}</div>`;
+function deltaHtml(dlt, esPct, subirEsBueno, vs) {
+  if (!isFinite(dlt)) return '';
+  if (Math.abs(dlt) < 1e-9) return `<div class="delta" style="color:var(--muted)">= igual que ${vs}</div>`;
+  const txt = esPct ? `${Math.abs(dlt * 100).toFixed(1)} pts` : Math.abs(dlt);
+  return `<div class="delta ${(dlt > 0) === subirEsBueno ? 'ok' : 'pend'}">${dlt > 0 ? '▲' : '▼'} ${txt} vs ${vs}</div>`;
+}
+
 function renderKpis(s, prev) {
   $('periodo').textContent = `Semana ${s.semana} de ${s.anio} · del ${fdate(s.del)} al ${fdate(s.al)} · ${s.personal} personas en planta`;
   const k = [
@@ -260,26 +297,49 @@ function renderKpis(s, prev) {
     ['Avance capacitación', 'avance_capacitacion', true, true, `${s.cursos_realizados} de ${s.cursos_programados} cursos`],
     ['Asistencia capacitación', 'asistencia_capacitacion', true, true, `${s.cap_asistieron} de ${s.cap_programados} programados`],
   ];
-  $('kpis').innerHTML = k.map(([t, f, esPct, subirEsBueno, sub]) => {
-    let delta = '';
-    if (prev && prev[f] !== '' && prev[f] != null) {
-      const dlt = Number(s[f]) - Number(prev[f]);
-      const txt = esPct ? `${Math.abs(dlt * 100).toFixed(1)} pts` : Math.abs(dlt);
-      delta = dlt === 0 ? `<div class="delta" style="color:var(--muted)">= igual que S${prev.semana}</div>`
-        : `<div class="delta ${(dlt > 0) === subirEsBueno ? 'ok' : 'pend'}">${dlt > 0 ? '▲' : '▼'} ${txt} vs S${prev.semana}</div>`;
-    }
-    return `<div class="card kpi"><div class="t">${t}</div><div class="v">${esPct ? pct(s[f]) : s[f]}</div><div class="d">${sub}</div>${delta}</div>`;
-  }).join('');
+  $('kpis').innerHTML = k.map(([t, f, esPct, subirEsBueno, sub]) => tile(t, esPct ? pct(s[f]) : s[f], sub,
+    prev && prev[f] !== '' && prev[f] != null ? deltaHtml(Number(s[f]) - Number(prev[f]), esPct, subirEsBueno, `S${prev.semana}`) : '')).join('');
+}
+
+// ---------- Rotación (cifras anuales; se guardan con cada semana) ----------
+function renderRot(R) {
+  $('rotacion').hidden = !R.length;
+  if (!R.length) return;
+  const de = t => R.filter(r => r.tabla === t).map(r => ({ ...r, anio: Number(r.anio), valor: Number(r.valor) || 0 }));
+  const tasas = de('tasa'), anios = [...new Set(tasas.map(r => r.anio))].sort();
+  const a = anios.at(-1), a0 = anios.at(-2);
+  const tasa = (anio, tipo = '') => sum(tasas.filter(r => r.anio === anio && key(r.concepto).includes(tipo)), r => r.valor);
+  const vs = tipo => a0 ? deltaHtml(tasa(a, tipo) - tasa(a0, tipo), true, false, a0) : '';
+  const antig = de('antiguedad'), motivo = de('motivo'), puesto = de('puesto');
+  const bajas = sum(motivo, r => r.valor), totAntig = sum(antig, r => r.valor), dias = de('promedio_dias')[0]?.valor || 0;
+  const top = [...motivo].sort((x, y) => y.valor - x.valor)[0];
+  $('rotTitulo').textContent = `Rotación de personal ${a}`;
+  $('kpisRot').innerHTML = [
+    tile(`Rotación total ${a}`, pct(tasa(a)), a0 ? `${a0}: ${pct(tasa(a0))}` : '', vs()),
+    tile('Rotación voluntaria', pct(tasa(a, 'voluntaria')), a0 ? `${a0}: ${pct(tasa(a0, 'voluntaria'))}` : '', vs('voluntaria')),
+    tile('Rotación forzada', pct(tasa(a, 'forzada')), a0 ? `${a0}: ${pct(tasa(a0, 'forzada'))}` : '', vs('forzada')),
+    tile(`Bajas ${a}`, bajas, top ? `${pct(top.valor / bajas)} por ${esc(top.concepto.toLowerCase())}` : ''),
+    antig.length ? tile(`Bajas con ${esc(antig[0].concepto)} de antigüedad`, pct(antig[0].valor / totAntig), `${antig[0].valor} de ${totAntig} bajas`) : '',
+    dias ? tile('Antigüedad promedio a la baja', `${(dias / 365).toFixed(1)} años`, `${dias} días`) : '',
+  ].join('');
+
+  const tipos = [...new Set(tasas.map(r => r.concepto))];
+  mk('rTasa', 'bar', [...tipos.map(t => String(t).replace(/^rotaci[oó]n\s*/i, '')), 'Total'],
+    anios.slice(-2).map((y, i, arr) => ({ label: String(y), color: i === arr.length - 1 ? '--navy' : '--gris', data: [...tipos.map(t => tasa(y, key(t))), tasa(y)] })), { pct: true });
+  mk('rAntig', 'bar', antig.map(r => r.concepto), [{ label: 'Bajas', color: '--navy', data: antig.map(r => r.valor) }], { tot: totAntig });
+  mk('rMotivo', 'bar', motivo.map(r => r.concepto), [{ label: 'Bajas', color: '--navy', data: motivo.map(r => r.valor) }], { horizontal: true, tot: bajas });
+  mk('rPuesto', 'bar', puesto.map(r => r.concepto), [{ label: 'Bajas', color: '--navy', data: puesto.map(r => r.valor) }], { horizontal: true, tot: sum(puesto, r => r.valor) });
 }
 
 // ---------- Semana cargada desde Excel ----------
-let actual = null, vista = null, hist = { semanal: [], plantas: [] };
+let actual = null, vista = null, hist = { semanal: [], plantas: [], rotacion: [] };
 const anterior = id => hist.semanal.filter(r => r.id_semana < id).at(-1);
 
 function renderSemana(d) {
   vista = d;
   const s = resumen(d);
   renderKpis(s, anterior(s.id_semana));
+  renderRot(d.rot || []);
   const fechas = d.faltas.map(f => f.fecha_falta).sort();
   $('aviso').textContent = fechas.length && s.del && (fechas[0] < s.del || fechas.at(-1) > s.al)
     ? `Ojo: las faltas van del ${fechas[0]} al ${fechas.at(-1)} y no coinciden con las fechas de la hoja Config.` : '';
@@ -383,7 +443,9 @@ async function verSemana(id, preguntar = true) {
   if (actual && resumen(actual).id_semana === id) { renderSemana(actual); $('estado').textContent = `Viendo semana ${id} (Excel cargado).`; return; }
   const s = hist.semanal.find(r => r.id_semana === id);
   if (!s) return;
+  const rot = (hist.rotacion || []).filter(r => r.id_semana === id);
   renderKpis(s, anterior(id));
+  renderRot(rot);
   $('aviso').textContent = '';
   $('drop').hidden = true;
   const clave = pedirClave(preguntar);
@@ -399,7 +461,7 @@ async function verSemana(id, preguntar = true) {
       faltas: r.faltas.map(f => ({ ...f, fecha_falta: String(f.fecha_falta).slice(0, 10) })),
       incap: r.incapacidades, nom: r.incidencias,
       cap: P.map(p => ({ planta: p.planta, prog: Number(p.cap_programados) || 0, asis: Number(p.cap_asistieron) || 0 })),
-      cursosProg: Number(s.cursos_programados) || 0, cursosReal: Number(s.cursos_realizados) || 0,
+      cursosProg: Number(s.cursos_programados) || 0, cursosReal: Number(s.cursos_realizados) || 0, rot,
     });
     $('estado').textContent = `Viendo semana ${id} (desde Google Sheets).`;
   } catch (e) { $('semana').hidden = true; $('estado').textContent = 'No pude cargar el detalle: ' + e.message; }
@@ -418,6 +480,7 @@ async function guardar() {
     Faltas: actual.faltas.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
     Incapacidades: actual.incap.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
     Incidencias_Nomina: actual.nom.map(r => ({ id_semana: s.id_semana, ...plain(r) })),
+    Rotacion: actual.rot.map(r => ({ id_semana: s.id_semana, ...r })),
   };
   $('estado').textContent = 'Guardando en Google Sheets…';
   try {

@@ -72,6 +72,8 @@ details[open] summary { margin-bottom: 8px; }
 #tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
 #tabs button { padding: 10px 16px; border: 0; border-bottom: 3px solid transparent; background: none; color: var(--ink-2); font: inherit; font-weight: 600; cursor: pointer; }
 #tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--marca-navy); }
+#tendencia { grid-template-columns: 1fr; } /* una gráfica por renglón, a todo lo ancho */
+#tendencia .chart { height: 340px; }
 [hidden] { display: none !important; }
 </style>
 </head>
@@ -139,7 +141,7 @@ details[open] summary { margin-bottom: 8px; }
   <div id="historico" hidden>
     <section class="grid kpis" id="kpisAcum"></section>
     <h3>Tendencia por periodo</h3>
-    <section class="grid charts">
+    <section class="grid charts" id="tendencia">
       <div class="card"><h2>% Ausentismo por planta</h2><div class="chart"><canvas id="hAus"></canvas></div></div>
       <div class="card"><h2>Faltas por motivo</h2><div class="chart"><canvas id="hFaltas"></canvas></div></div>
       <div class="card"><h2>Días de incapacidad</h2><div class="chart"><canvas id="hIncap"></canvas></div></div>
@@ -705,11 +707,24 @@ async function cargarHist() {
 }
 
 const pedirClave = preguntar => store.get('kpis_clave') || (preguntar ? prompt('Clave de Google Sheets (la configuraste en Apps Script):') : null);
-async function enviar(body) {
-  const r = await (await fetch(SHEETS_URL, { method: 'POST', body: JSON.stringify(body) })).json();
+// Guardar/leer un periodo es repetible (reemplaza por id_semana), así que una falla temporal de Google se reintenta.
+async function enviar(body, intento = 1) {
+  let r;
+  try {
+    const txt = await (await fetch(SHEETS_URL, { method: 'POST', body: JSON.stringify(body) })).text();
+    try { r = JSON.parse(txt); }
+    catch { r = { ok: false, error: 'Google respondió con un error: ' + txt.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) }; }
+  } catch (e) {
+    r = { ok: false, error: `No hubo respuesta de Google (${e.message}). Revisa internet o que el Apps Script esté implementado con la versión más reciente.` };
+  }
   if (!r.ok) {
-    if (r.error === 'Clave incorrecta') store.set('kpis_clave', null);
-    throw new Error(r.error);
+    if (r.error === 'Clave incorrecta') { store.set('kpis_clave', null); throw new Error(r.error); }
+    if (intento < 3) { // ponytail: 3 intentos fijos (5 s y 10 s de espera); subirlos si Google falla seguido
+      $('estado').textContent += ` · Google falló, reintento ${intento} de 2…`;
+      await new Promise(ok => setTimeout(ok, 5000 * intento));
+      return enviar(body, intento + 1);
+    }
+    throw new Error(r.error || 'Google no dio detalle del error: ' + JSON.stringify(r).slice(0, 300));
   }
   store.set('kpis_clave', body.clave);
   return r;
@@ -747,9 +762,7 @@ async function verSemana(id, preguntar = true) {
     $('estado').textContent = `Viendo periodo ${id} (desde Google Sheets).`;
   } catch (e) {
     $('semana').hidden = true;
-    $('estado').textContent = e instanceof TypeError // falla de red/CORS: casi siempre el Apps Script publicado es una versión vieja
-      ? 'No pude cargar el detalle. Revisa que el Apps Script esté implementado con la versión más reciente de Codigo.gs.'
-      : 'No pude cargar el detalle: ' + e.message;
+    $('estado').textContent = 'No pude cargar el detalle: ' + e.message;
   }
 }
 

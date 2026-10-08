@@ -817,14 +817,19 @@ async function guardarPeriodo(id, F, grupo, clave) {
 async function guardar(enLote = false) {
   const s = resumen(actual), F = s.id_semana;
   if (actual.errores.length) return alert('No se puede guardar: el archivo tiene errores.\n\n' + actual.errores.join('\n'));
-  const grupos = { [F]: { periodo: actual.periodo, faltas: actual.faltas, incap: actual.incap, nom: actual.nom, bajas: actual.bajas }, ...(actual.otros || {}) };
+  // En lote: lo que el archivo de ese otro periodo ya trae no se manda (se guarda con su propio archivo; evita ~10x guardados)
+  const yaVa = (id, c, r) => lote?.[id]?.has(c + '|' + CLAVE_REG[c](r));
+  const otros = Object.fromEntries(Object.entries(actual.otros || {})
+    .map(([id, g]) => [id, { ...g, ...Object.fromEntries(Object.keys(SEC_DE).map(c => [c, g[c].filter(r => !yaVa(id, c, r))])) }])
+    .filter(([, g]) => Object.keys(SEC_DE).some(c => g[c].length)));
+  const grupos = { [F]: { periodo: actual.periodo, faltas: actual.faltas, incap: actual.incap, nom: actual.nom, bajas: actual.bajas }, ...otros };
   // Periodos donde este archivo dejó registros la vez pasada (para quitarlos si ya no van ahí)
   const antes = hist.semanal.filter(r => r.id_semana !== F && listaDe(r.origenes).includes(F) && !grupos[r.id_semana]).map(r => r.id_semana);
   const existe = hist.semanal.some(r => r.id_semana === F);
   const msg = (`¿Guardar el periodo ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
     `\n\nDepartamentos en este archivo: ${[...actual.secs].map(id => SECCIONES[id]).join(', ') || 'ninguno'}.` +
     (existe ? '\nEse periodo ya existe: se reemplaza lo que trae este archivo y se conserva lo demás.' : '') +
-    (Object.keys(actual.otros || {}).length ? `\n\nTambién van a otros periodos (sin borrar lo que ya tienen):\n${resumenOtros(actual.otros).join('\n')}` : '') +
+    (Object.keys(otros).length ? `\n\nTambién van a otros periodos (sin borrar lo que ya tienen):\n${resumenOtros(otros).join('\n')}` : '') +
     (antes.length ? `\n\nSe quitan registros que este archivo había puesto antes en: ${antes.map(id => 'P' + Number(id.slice(-2))).join(', ')}.` : ''));
   if (!enLote && !confirm(msg)) return;
   const clave = pedirClave(true);
@@ -967,6 +972,7 @@ async function load(buf, enLote = false) {
   return {};
 }
 
+let lote = null; // { id_semana: claves de los registros que trae su archivo } mientras se cargan varios juntos
 // Varios archivos a la vez: se guardan uno por uno en orden de nombre (P01, P02…), con una sola confirmación.
 async function cargarVarios(files) {
   files = [...files].sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
@@ -974,6 +980,11 @@ async function cargarVarios(files) {
   if (files.length < 2) return files[0] && load(await files[0].arrayBuffer());
   if (!confirm(`¿Cargar ${files.length} archivos y guardarlos en Google Sheets uno por uno?\n\n${files[0].name} … ${files.at(-1).name}\n\n` +
     'Cada archivo reemplaza solo los departamentos que trae en "Sí". Puede tardar varios minutos: no cierres la página.')) return;
+  lote = {};
+  for (const f of files) try {
+    const d = parse(XLSX.read(await f.arrayBuffer(), { cellDates: true })), per = periodoDeFecha(ymd(d.del));
+    if (per) lote[idDe(per)] = new Set(Object.keys(SEC_DE).flatMap(c => d[c].map(r => c + '|' + CLAVE_REG[c](r))));
+  } catch { /* el error se reporta al cargarlo */ }
   const malos = [];
   for (const [i, f] of files.entries()) {
     $('estado').textContent = `Archivo ${i + 1} de ${files.length}: ${f.name}…`;
@@ -981,6 +992,7 @@ async function cargarVarios(files) {
     if (r.errores?.length) malos.push(`${f.name} (no se guardó): ${r.errores.join(' ')}`);
     if (r.fallas?.length) { malos.push(`${f.name}: ${r.fallas.join('; ')}`); break; } // falla de conexión o clave: se detiene
   }
+  lote = null;
   $('estado').textContent = malos.length ? `Terminó con avisos en ${malos.length} archivo(s).` : `✓ Se guardaron los ${files.length} archivos.`;
   alert(malos.length ? 'Revisa estos archivos:\n\n' + malos.join('\n\n') : `Listo: se guardaron los ${files.length} archivos.`);
 }

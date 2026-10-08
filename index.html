@@ -69,6 +69,9 @@ details summary { cursor: pointer; font-weight: 600; font-size: 15px; }
 details[open] summary { margin-bottom: 8px; }
 .tag { padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid currentColor; white-space: nowrap; }
 .ok { color: var(--good); } .pend { color: var(--bad); }
+#tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+#tabs button { padding: 10px 16px; border: 0; border-bottom: 3px solid transparent; background: none; color: var(--ink-2); font: inherit; font-weight: 600; cursor: pointer; }
+#tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--marca-navy); }
 [hidden] { display: none !important; }
 </style>
 </head>
@@ -93,7 +96,13 @@ details[open] summary { margin-bottom: 8px; }
   <div id="drop">Arrastra aquí uno o <b>varios</b> archivos de periodo (puedes seleccionarlos todos juntos) o usa “Cargar Excel”.<br>
     <small>El Excel se procesa en tu navegador. Al guardar, solo se envía a tu Google Sheet.</small></div>
 
-  <section class="grid kpis"><div id="kpis" style="display:contents"></div><div id="kpisRot" style="display:contents"></div></section>
+  <nav id="tabs" role="tablist" hidden>
+    <button role="tab" data-tab="periodo" aria-selected="true">Periodo</button>
+    <button role="tab" data-tab="acumulado" aria-selected="false">Acumulado</button>
+  </nav>
+
+  <div id="tabPeriodo">
+  <section class="grid kpis" id="kpis"></section>
 
   <div id="semana" hidden>
     <section class="grid charts">
@@ -124,8 +133,26 @@ details[open] summary { margin-bottom: 8px; }
     <div class="card scroll" data-sec="bajas"><details><summary>Detalle de bajas</summary><table id="tBajas"></table></details></div>
   </div>
 
+  </div>
+
+  <div id="tabAcumulado" hidden>
+  <div id="historico" hidden>
+    <section class="grid kpis" id="kpisAcum"></section>
+    <h3>Tendencia por periodo</h3>
+    <section class="grid charts">
+      <div class="card"><h2>% Ausentismo por planta</h2><div class="chart"><canvas id="hAus"></canvas></div></div>
+      <div class="card"><h2>Faltas por motivo</h2><div class="chart"><canvas id="hFaltas"></canvas></div></div>
+      <div class="card"><h2>Días de incapacidad</h2><div class="chart"><canvas id="hIncap"></canvas></div></div>
+      <div class="card"><h2>Incidencias de nómina</h2><div class="chart"><canvas id="hNom"></canvas></div></div>
+      <div class="card"><h2>Capacitación</h2><div class="chart"><canvas id="hCap"></canvas></div></div>
+      <div class="card"><h2>Bajas por periodo</h2><div class="chart"><canvas id="hBajas"></canvas></div></div>
+      <div class="card"><h2>Bajas acumuladas en el año</h2><div class="chart"><canvas id="hBajasAcum"></canvas></div></div>
+    </section>
+  </div>
+
   <div id="rotacion" hidden>
     <h3 id="rotTitulo">Rotación de personal</h3>
+    <section class="grid kpis" id="kpisRot"></section>
     <section class="grid charts">
       <div class="card"><h2>% Rotación por tipo de salida</h2><div class="chart"><canvas id="rTasa"></canvas></div></div>
       <div class="card"><h2>Bajas por antigüedad</h2><div class="chart"><canvas id="rAntig"></canvas></div></div>
@@ -134,17 +161,7 @@ details[open] summary { margin-bottom: 8px; }
     </section>
   </div>
 
-  <div id="historico" hidden>
-    <h3>Histórico semanal</h3>
-    <section class="grid charts">
-      <div class="card"><h2>% Ausentismo por planta</h2><div class="chart"><canvas id="hAus"></canvas></div></div>
-      <div class="card"><h2>Faltas por motivo</h2><div class="chart"><canvas id="hFaltas"></canvas></div></div>
-      <div class="card"><h2>Días de incapacidad</h2><div class="chart"><canvas id="hIncap"></canvas></div></div>
-      <div class="card"><h2>Incidencias de nómina</h2><div class="chart"><canvas id="hNom"></canvas></div></div>
-      <div class="card"><h2>Capacitación</h2><div class="chart"><canvas id="hCap"></canvas></div></div>
-      <div class="card"><h2>Bajas por periodo</h2><div class="chart"><canvas id="hBajas"></canvas></div></div>
-    </section>
-    <div class="card scroll"><details><summary>Periodos guardados</summary><table id="tHist"></table></details></div>
+  <div class="card scroll" id="cardHist" hidden><details><summary>Periodos guardados</summary><table id="tHist"></table></details></div>
   </div>
 </main>
 
@@ -171,7 +188,7 @@ const store = { get: k => { try { return localStorage.getItem(k); } catch { retu
 const MOTIVOS = ['JUSTIFICADA', 'INJUSTIFICADA', 'DISCIPLINA'];
 const COLOR_MOTIVO = { JUSTIFICADA: '--gris', INJUSTIFICADA: '--navy', DISCIPLINA: '--teal' };
 const CAMPO_MOTIVO = { JUSTIFICADA: 'justificadas', INJUSTIFICADA: 'injustificadas', DISCIPLINA: 'disciplina' };
-const COLOR_PLANTA = ['--navy', '--gris', '--teal']; // ponytail: 3 colores de marca; una 4a planta sale en gris tenue
+const COLOR_PLANTA = ['--navy', '--gris', '--teal']; // ponytail: 3 colores de marca; las demás áreas salen en gris tenue punteado
 
 // Departamentos (secciones). Un archivo dice en Config cuáles trae; lo que no traiga se conserva de lo ya guardado.
 const SECCIONES = { ausentismo: 'Ausentismo', incapacidades: 'Incapacidades', nomina: 'Incidencias de nómina', capacitacion: 'Capacitación', rotacion: 'Rotación', bajas: 'Bajas' };
@@ -507,11 +524,6 @@ function renderKpis(s, prev) {
   const tiles = KPIS.map(([t, f, esPct, subirEsBueno, sub]) => vacio(s[f]) ? tile(t, '—', 'Sin datos')
     : tile(t, esPct ? pct(s[f]) : s[f], sub(s),
       prev && !vacio(prev[f]) ? deltaHtml(Number(s[f]) - Number(prev[f]), esPct, subirEsBueno, `P${prev.semana}`) : ''));
-  if (!vacio(s.bajas)) {
-    const previos = hist.semanal.filter(r => Number(r.anio) === Number(s.anio) && Number(r.semana) < Number(s.semana));
-    const acum = sum(previos, r => r.bajas) + Number(s.bajas);
-    tiles.push(tile(`Bajas acumuladas ${s.anio}`, acum, `periodos 1 a ${s.semana} con datos guardados`));
-  }
   $('kpis').innerHTML = tiles.join('');
 }
 
@@ -553,7 +565,6 @@ function renderSemana(d) {
   vista = d;
   const s = resumen(d);
   renderKpis(s, anterior(s.id_semana));
-  renderRot(d.rot || []);
   const fechas = d.faltas.map(f => f.fecha_falta).sort();
   $('aviso').innerHTML = (d.errores || []).map(e => '⚠ ' + esc(e)).concat(d.otros && Object.keys(d.otros).length
     ? [`↪ Registros de otros periodos (se agregan a ese periodo al guardar): ${esc(resumenOtros(d.otros).join(' · '))}`] : []).join('<br>');
@@ -638,13 +649,27 @@ function renderHist() {
     [...S].reverse().map(r => `<option value="${esc(r.id_semana)}">Periodo ${r.semana} · ${r.anio} (${fdate(r.del)} – ${fdate(r.al)})</option>`).join('');
   if (vista) $('sel').value = resumen(vista).id_semana;
   $('sel').hidden = !$('sel').options.length;
-  $('historico').hidden = !S.length;
-  if (!S.length) return;
+  $('historico').hidden = $('cardHist').hidden = $('tabs').hidden = !S.length;
+  if (!S.length) return verTab('periodo', false);
+  // Rotación: cifras anuales del tablero, del último periodo que las trae
+  const idRot = [...new Set((hist.rotacion || []).map(r => r.id_semana))].sort().at(-1);
+  renderRot((hist.rotacion || []).filter(r => r.id_semana === idRot));
+  const T = f => sum(S, r => r[f]), conPersonal = S.filter(r => Number(r.personal) && r.faltas !== '');
+  $('kpisAcum').innerHTML = [
+    tile('Periodos con datos', S.length, `del P${S[0].semana} (${fdate(S[0].del)}) al P${S.at(-1).semana} (${fdate(S.at(-1).al)})`),
+    tile('Faltas acumuladas', T('faltas'), `${T('injustificadas')} injustificadas · ${T('justificadas')} justificadas · ${T('disciplina')} disciplina`),
+    conPersonal.length ? tile('Ausentismo promedio', pct(sum(conPersonal, r => r.faltas) / sum(conPersonal, r => r.personal)), `${conPersonal.length} periodos con personal capturado`) : '',
+    tile('Días de incapacidad', T('dias_incapacidad'), 'suma de los días dentro de cada periodo'),
+    tile('Incidencias de nómina', T('incidencias_nomina'), 'reportadas en todos los periodos'),
+    tile('Bajas acumuladas', T('bajas'), `${T('bajas_voluntarias')} voluntarias · ${T('bajas_forzadas')} forzadas`),
+  ].join('');
   const varios = new Set(S.map(r => r.anio)).size > 1;
   const L = S.map(r => varios ? `S${r.semana}·${String(r.anio).slice(2)}` : `S${r.semana}`);
   const ids = S.map(r => r.id_semana);
-  const plantas = [...new Set(hist.plantas.map(p => p.planta))].sort();
-  mk('hAus', 'line', L, plantas.map((p, i) => ({ label: p, color: COLOR_PLANTA[i],
+  // Plantas numeradas primero (colores de marca); las demás áreas en línea punteada
+  const plantas = [...new Set(hist.plantas.map(p => p.planta))]
+    .sort((a, b) => /^PLANTA/.test(b) - /^PLANTA/.test(a) || a.localeCompare(b, 'es', { numeric: true }));
+  mk('hAus', 'line', L, plantas.map((p, i) => ({ label: p, color: COLOR_PLANTA[i] ?? '--muted', borderDash: i < 3 ? [] : [[6, 4], [2, 3]][(i - 3) % 2],
     data: ids.map(id => num(hist.plantas.find(x => x.id_semana === id && x.planta === p)?.ausentismo)) })), { pct: true });
   mk('hFaltas', 'bar', L, MOTIVOS.map(m => ({ label: titulo(m), color: COLOR_MOTIVO[m], data: S.map(r => num(r[CAMPO_MOTIVO[m]])) })), { stacked: true });
   mk('hIncap', 'bar', L, [{ label: 'Días de incapacidad', color: '--navy', data: S.map(r => num(r.dias_incapacidad)) }]);
@@ -657,6 +682,9 @@ function renderHist() {
     { label: 'Voluntarias', color: '--navy', data: S.map(r => num(r.bajas_voluntarias)) },
     { label: 'Forzadas', color: '--gris', data: S.map(r => num(r.bajas_forzadas)) },
   ], { stacked: true });
+  let corrida = 0; // se reinicia cada año
+  mk('hBajasAcum', 'line', L, [{ label: 'Bajas acumuladas', color: '--navy',
+    data: S.map((r, i) => (corrida = (i && S[i - 1].anio !== r.anio ? 0 : corrida) + (Number(r.bajas) || 0), vacio(r.bajas) ? null : corrida)) }]); // sin datos de bajas = sin punto
   const v = x => x === '' || x == null ? '—' : x;
   tbl('tHist', ['Periodo', 'Del', 'Al', 'Ausentismo', 'Faltas', 'Injust.', 'Incap.', 'Días incap.', 'Riesgos', 'Inc. nómina', 'Avance cap.', 'Asist. cap.', 'Bajas'],
     [...S].reverse().map(r => [esc(r.id_semana), fdate(r.del), fdate(r.al), pct(r.ausentismo), v(r.faltas), v(r.injustificadas), v(r.incapacidades),
@@ -706,9 +734,7 @@ async function verSemana(id, preguntar = true) {
   if (actual && resumen(actual).id_semana === id) { renderSemana(actual); $('estado').textContent = `Viendo periodo ${id} (Excel cargado).`; return; }
   const s = hist.semanal.find(r => r.id_semana === id);
   if (!s) return;
-  const rot = (hist.rotacion || []).filter(r => r.id_semana === id);
   renderKpis(s, anterior(id));
-  renderRot(rot);
   $('aviso').textContent = '';
   $('drop').hidden = true;
   const clave = pedirClave(preguntar);
@@ -931,6 +957,7 @@ async function load(buf, enLote = false) {
 // Varios archivos a la vez: se guardan uno por uno en orden de nombre (P01, P02…), con una sola confirmación.
 async function cargarVarios(files) {
   files = [...files].sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
+  if (files.length) verTab('periodo', false); // lo cargado se ve en la pestaña Periodo
   if (files.length < 2) return files[0] && load(await files[0].arrayBuffer());
   if (!confirm(`¿Cargar ${files.length} archivos y guardarlos en Google Sheets uno por uno?\n\n${files[0].name} … ${files.at(-1).name}\n\n` +
     'Cada archivo reemplaza solo los departamentos que trae en "Sí". Puede tardar varios minutos: no cierres la página.')) return;
@@ -945,7 +972,16 @@ async function cargarVarios(files) {
   alert(malos.length ? 'Revisa estos archivos:\n\n' + malos.join('\n\n') : `Listo: se guardaron los ${files.length} archivos.`);
 }
 
-$('sel').onchange = e => verSemana(e.target.value);
+// Pestañas Periodo / Acumulado (se recuerda la última elegida en este navegador)
+function verTab(t, recordar = true) {
+  if (recordar) store.set('kpis_tab', t);
+  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === t));
+  $('tabPeriodo').hidden = t !== 'periodo';
+  $('tabAcumulado').hidden = t !== 'acumulado';
+}
+$('tabs').onclick = e => e.target.dataset.tab && verTab(e.target.dataset.tab);
+verTab(store.get('kpis_tab') || 'periodo', false);
+$('sel').onchange = e => { verTab('periodo'); verSemana(e.target.value); };
 $('file').onchange = e => { cargarVarios(e.target.files); e.target.value = ''; };
 $('guardar').onclick = () => guardar();
 $('exportar').onclick = exportar;

@@ -81,7 +81,7 @@ details[open] summary { margin-bottom: 8px; }
     <div id="estado"></div>
   </div>
   <div class="btns">
-    <label class="btn">Cargar Excel<input type="file" id="file" accept=".xlsx,.xls"></label>
+    <label class="btn">Cargar Excel<input type="file" id="file" accept=".xlsx,.xls" multiple></label>
     <select class="btn" id="sel" hidden aria-label="Semana a mostrar"></select>
     <button class="btn" id="exportar" hidden>Exportar a Excel</button>
     <button class="btn" id="guardar" hidden>Guardar periodo en Google Sheets</button>
@@ -90,7 +90,7 @@ details[open] summary { margin-bottom: 8px; }
 <div class="franja"></div>
 
 <main>
-  <div id="drop">Arrastra aquí <b>KPIs_RH_Semanal.xlsx</b> o usa “Cargar Excel”.<br>
+  <div id="drop">Arrastra aquí uno o <b>varios</b> archivos de periodo (puedes seleccionarlos todos juntos) o usa “Cargar Excel”.<br>
     <small>El Excel se procesa en tu navegador. Al guardar, solo se envía a tu Google Sheet.</small></div>
 
   <section class="grid kpis"><div id="kpis" style="display:contents"></div><div id="kpisRot" style="display:contents"></div></section>
@@ -775,20 +775,21 @@ async function guardarPeriodo(id, F, grupo, clave) {
   if (id === F) actual = Object.assign(m, { periodo: actual.periodo, errores: actual.errores, otros: {} });
 }
 
-async function guardar() {
+async function guardar(enLote = false) {
   const s = resumen(actual), F = s.id_semana;
   if (actual.errores.length) return alert('No se puede guardar: el archivo tiene errores.\n\n' + actual.errores.join('\n'));
   const grupos = { [F]: { periodo: actual.periodo, faltas: actual.faltas, incap: actual.incap, nom: actual.nom, bajas: actual.bajas }, ...(actual.otros || {}) };
   // Periodos donde este archivo dejó registros la vez pasada (para quitarlos si ya no van ahí)
   const antes = hist.semanal.filter(r => r.id_semana !== F && listaDe(r.origenes).includes(F) && !grupos[r.id_semana]).map(r => r.id_semana);
   const existe = hist.semanal.some(r => r.id_semana === F);
-  if (!confirm(`¿Guardar el periodo ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
+  const msg = (`¿Guardar el periodo ${s.semana} de ${s.anio} (${fdate(s.del)} – ${fdate(s.al)}) en Google Sheets?` +
     `\n\nDepartamentos en este archivo: ${[...actual.secs].map(id => SECCIONES[id]).join(', ') || 'ninguno'}.` +
     (existe ? '\nEse periodo ya existe: se reemplaza lo que trae este archivo y se conserva lo demás.' : '') +
     (Object.keys(actual.otros || {}).length ? `\n\nTambién van a otros periodos (sin borrar lo que ya tienen):\n${resumenOtros(actual.otros).join('\n')}` : '') +
-    (antes.length ? `\n\nSe quitan registros que este archivo había puesto antes en: ${antes.map(id => 'P' + Number(id.slice(-2))).join(', ')}.` : ''))) return;
+    (antes.length ? `\n\nSe quitan registros que este archivo había puesto antes en: ${antes.map(id => 'P' + Number(id.slice(-2))).join(', ')}.` : ''));
+  if (!enLote && !confirm(msg)) return;
   const clave = pedirClave(true);
-  if (!clave) return;
+  if (!clave) return ['sin clave'];
   const ids = [F, ...Object.keys(grupos).filter(id => id !== F).sort(), ...antes];
   const hechos = [], fallas = [];
   for (const id of ids) {
@@ -803,7 +804,8 @@ async function guardar() {
   renderSemana(actual);
   $('estado').textContent = (hechos.length ? `Guardado: ${hechos.join(', ')}.` : '') +
     (fallas.length ? ` No se guardó: ${fallas.join('; ')}. Vuelve a cargar el archivo para reintentar.` : '');
-  if (fallas.length) alert('Algunos periodos no se guardaron:\n' + fallas.join('\n'));
+  if (fallas.length && !enLote) alert('Algunos periodos no se guardaron:\n' + fallas.join('\n'));
+  return fallas;
 }
 
 // ---------- Exportar la semana en pantalla a Excel ----------
@@ -904,7 +906,7 @@ function exportar() {
   XLSX.writeFile(wb, `KPIs_RH_${s.id_semana}.xlsx`);
 }
 
-async function load(buf) {
+async function load(buf, enLote = false) {
   try {
     const wb = XLSX.read(buf, { cellDates: true });
     actual = parse(wb);
@@ -912,26 +914,45 @@ async function load(buf) {
     if (actual.periodo) repartir(actual);
     actual.errores = [...validarFormato(wb, actual.secs), ...validar(actual)];
     renderSemana(actual);
-  } catch (e) { alert('No pude leer el archivo: ' + e.message); console.error(e); return; }
+  } catch (e) { if (!enLote) alert('No pude leer el archivo: ' + e.message); console.error(e); return { errores: ['No pude leer el archivo: ' + e.message] }; }
   const p = actual.periodo;
   if (actual.errores.length) {
     $('estado').textContent = 'El archivo tiene errores (ver avisos). No se puede guardar: corrígelos y vuelve a cargarlo.';
     $('guardar').hidden = true;
     if (SHEETS_URL) renderHist();
-    return alert('Revisa el archivo antes de guardarlo:\n\n' + actual.errores.join('\n'));
+    if (!enLote) alert('Revisa el archivo antes de guardarlo:\n\n' + actual.errores.join('\n'));
+    return { errores: actual.errores };
   }
   $('estado').textContent = `✓ Coincide con el periodo ${p.n} de ${p.anio} (${fdate(p.del)} – ${fdate(p.al)}).`;
-  if (SHEETS_URL) { renderHist(); $('guardar').hidden = false; guardar(); }
+  if (SHEETS_URL) { renderHist(); $('guardar').hidden = false; return { fallas: await guardar(enLote) || [] }; }
+  return {};
+}
+
+// Varios archivos a la vez: se guardan uno por uno en orden de nombre (P01, P02…), con una sola confirmación.
+async function cargarVarios(files) {
+  files = [...files].sort((a, b) => a.name.localeCompare(b.name, 'es', { numeric: true }));
+  if (files.length < 2) return files[0] && load(await files[0].arrayBuffer());
+  if (!confirm(`¿Cargar ${files.length} archivos y guardarlos en Google Sheets uno por uno?\n\n${files[0].name} … ${files.at(-1).name}\n\n` +
+    'Cada archivo reemplaza solo los departamentos que trae en "Sí". Puede tardar varios minutos: no cierres la página.')) return;
+  const malos = [];
+  for (const [i, f] of files.entries()) {
+    $('estado').textContent = `Archivo ${i + 1} de ${files.length}: ${f.name}…`;
+    const r = await load(await f.arrayBuffer(), true);
+    if (r.errores?.length) malos.push(`${f.name} (no se guardó): ${r.errores.join(' ')}`);
+    if (r.fallas?.length) { malos.push(`${f.name}: ${r.fallas.join('; ')}`); break; } // falla de conexión o clave: se detiene
+  }
+  $('estado').textContent = malos.length ? `Terminó con avisos en ${malos.length} archivo(s).` : `✓ Se guardaron los ${files.length} archivos.`;
+  alert(malos.length ? 'Revisa estos archivos:\n\n' + malos.join('\n\n') : `Listo: se guardaron los ${files.length} archivos.`);
 }
 
 $('sel').onchange = e => verSemana(e.target.value);
-$('file').onchange = e => { e.target.files[0]?.arrayBuffer().then(load); e.target.value = ''; };
-$('guardar').onclick = guardar;
+$('file').onchange = e => { cargarVarios(e.target.files); e.target.value = ''; };
+$('guardar').onclick = () => guardar();
 $('exportar').onclick = exportar;
 ['dragover', 'dragleave', 'drop'].forEach(t => document.addEventListener(t, e => {
   e.preventDefault();
   $('drop').classList.toggle('over', t === 'dragover');
-  if (t === 'drop' && e.dataTransfer.files[0]) e.dataTransfer.files[0].arrayBuffer().then(load);
+  if (t === 'drop') cargarVarios(e.dataTransfer.files);
 }));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (vista) renderSemana(vista); renderHist(); });
 cargarHist();

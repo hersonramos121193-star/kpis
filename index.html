@@ -80,7 +80,7 @@ details[open] summary { margin-bottom: 8px; }
 <body>
 <div class="top"><div class="in">
   <div>
-    <h1>KPIs Recursos Humanos</h1>
+    <h1>KPIs Recursos Humanos <small style="font-size:11px;font-weight:400;opacity:.7">v2026-10-08b</small></h1>
     <div id="periodo">Carga el archivo semanal de KPIs (.xlsx)</div>
     <div id="aviso"></div>
     <div id="estado"></div>
@@ -841,7 +841,7 @@ async function guardar(enLote = false) {
   const ids = [F, ...Object.keys(grupos).filter(id => id !== F).sort(), ...antes];
   const hechos = [], fallas = [];
   for (const id of ids) {
-    $('estado').textContent = `Guardando periodo ${Number(id.slice(-2))}… (${hechos.length + fallas.length + 1} de ${ids.length})`;
+    $('estado').textContent = (enLote ? `Archivo ${enLote.i} de ${enLote.n} (en lote) · ` : '') + `Guardando periodo ${Number(id.slice(-2))}… (${hechos.length + fallas.length + 1} de ${ids.length})`;
     try { await guardarPeriodo(id, F, grupos[id], clave); hechos.push('P' + Number(id.slice(-2))); }
     catch (e) {
       fallas.push(`P${Number(id.slice(-2))}: ${e.message}`);
@@ -992,7 +992,7 @@ async function cargarVarios(files) {
   const malos = [];
   for (const [i, f] of files.entries()) {
     $('estado').textContent = `Archivo ${i + 1} de ${files.length}: ${f.name}…`;
-    const r = await load(await f.arrayBuffer(), true);
+    const r = await load(await f.arrayBuffer(), { i: i + 1, n: files.length });
     if (r.errores?.length) malos.push(`${f.name} (no se guardó): ${r.errores.join(' ')}`);
     if (r.fallas?.length) { malos.push(`${f.name}: ${r.fallas.join('; ')}`); break; } // falla de conexión o clave: se detiene
   }

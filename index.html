@@ -80,7 +80,7 @@ details[open] summary { margin-bottom: 8px; }
 <body>
 <div class="top"><div class="in">
   <div>
-    <h1>KPIs Recursos Humanos <small style="font-size:11px;font-weight:400;opacity:.7">v2026-10-12</small></h1>
+    <h1>KPIs Recursos Humanos <small style="font-size:11px;font-weight:400;opacity:.7">v2026-10-12c</small></h1>
     <div id="periodo">Carga el archivo semanal de KPIs (.xlsx)</div>
     <div id="aviso"></div>
     <div id="estado"></div>
@@ -225,7 +225,7 @@ function table(wb, sheet, first) {
     if (r[0] === null || r[0] === '') break;
     out.push(Object.fromEntries(h.map((k, j) => [k, typeof r[j] === 'string' ? r[j].trim() : r[j]])));
   }
-  return { rows, out, enc: h, fila0: XLSX.utils.decode_range(ws['!ref']).s.r + i + 2 };
+  return { rows, out, enc: h, fila0: XLSX.utils.decode_range(ws['!ref']).s.r + i + 2, fin: i + 1 + out.length };
 }
 const cell = (rows, label) => (rows.find(r => key(r[0]).startsWith(key(label))) || []).slice(1).find(v => v !== null);
 
@@ -293,6 +293,9 @@ function validarFormato(wb, secs) {
     if (t.falta) { err.push(`Hoja "${f.hoja}": no encontré la tabla; el encabezado de la columna A debe decir "${f.columnas[0]}".`); continue; }
     const faltan = f.columnas.filter(c => !t.enc.includes(key(c)));
     if (faltan.length) { err.push(`Hoja "${f.hoja}": faltan las columnas ${faltan.map(c => `"${c}"`).join(', ')} (revisa que el encabezado esté escrito igual).`); continue; }
+    // Hojas de registros: la lectura para en la primera columna A vacía; si abajo hay más datos, se perderían sin aviso.
+    const ignoradas = f.fechas ? t.rows.slice(t.fin).filter(r => r.some(v => v !== null && String(v).trim() !== '')).length : 0;
+    if (ignoradas) err.push(`Hoja "${f.hoja}": la fila ${t.fila0 + t.out.length} tiene vacía la columna "${f.columnas[0]}": esa fila y las de abajo (${ignoradas} con datos) no se leerían. Llena esa columna o borra la fila vacía.`);
     for (const tb of f.tablas || []) if (table(wb, f.hoja, tb).falta) err.push(`Hoja "${f.hoja}": falta la tabla "${tb}".`);
     if (f.anios && !t.enc.some(k => /^\d{4}$/.test(k))) err.push(`Hoja "${f.hoja}": la tabla "Tipo de salida" debe tener una columna por año (2025, 2026…).`);
     const malas = [];
@@ -709,17 +712,19 @@ async function cargarHist() {
 const pedirClave = preguntar => store.get('kpis_clave') || (preguntar ? prompt('Clave de Google Sheets (la configuraste en Apps Script):') : null);
 // Guardar/leer un periodo es repetible (reemplaza por id_semana), así que una falla temporal de Google se reintenta.
 async function enviar(body, intento = 1) {
-  let r;
+  let r, temporal = false; // temporal = Google no respondió o respondió con su página de error (no con la de Codigo.gs)
   try {
     const txt = await (await fetch(SHEETS_URL, { method: 'POST', body: JSON.stringify(body) })).text();
     try { r = JSON.parse(txt); }
-    catch { r = { ok: false, error: 'Google respondió con un error: ' + txt.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) }; }
+    catch { temporal = true; r = { ok: false, error: 'Google respondió con un error: ' + txt.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300) }; }
   } catch (e) {
+    temporal = true;
     r = { ok: false, error: `No hubo respuesta de Google (${e.message}). Revisa internet o que el Apps Script esté implementado con la versión más reciente.` };
   }
   if (!r.ok) {
-    if (r.error === 'Clave incorrecta') { store.set('kpis_clave', null); throw new Error(r.error); }
-    if (intento < 3) { // ponytail: 3 intentos fijos (5 s y 10 s de espera); subirlos si Google falla seguido
+    if (r.error === 'Clave incorrecta') store.set('kpis_clave', null);
+    // Solo fallas temporales: los errores que manda Codigo.gs (clave, semana inválida) no se arreglan reintentando.
+    if (temporal && intento < 3) { // shortcut: 3 intentos fijos (5 s y 10 s de espera); subirlos si Google falla seguido
       $('estado').textContent += ` · Google falló, reintento ${intento} de 2…`;
       await new Promise(ok => setTimeout(ok, 5000 * intento));
       return enviar(body, intento + 1);

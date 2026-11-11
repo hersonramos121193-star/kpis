@@ -662,8 +662,8 @@ function renderSemana(d) {
   document.querySelectorAll('#semana [data-sec]').forEach(el => el.hidden = !secs.has(el.dataset.sec));
   // Bloques que quedaron sin tarjetas visibles se ocultan para no dejar huecos.
   document.querySelectorAll('#semana > section:not([hidden])').forEach(sec => sec.hidden = ![...sec.children].some(c => !c.hidden));
-  // Sin clave no llegan los nombres de nómina y bajas: se ocultan esas tablas.
-  ['tNom', 'tBajas'].forEach(t => $(t).closest('.card').hidden = !!d.anonimo);
+  // Sin clave no llegan nombres ni fichas: se ocultan las tablas de detalle.
+  ['tNom', 'tBajas', 'tFaltas', 'tIncap', 'tReinc', 'tSup'].forEach(t => $(t).closest('.card').hidden = !!d.anonimo);
   renderBajas(d.bajas || []);
   const poner = (id, v) => $(id).textContent = v;
   poner('gFaltas', s.faltas); poner('gFaltasD', `${s.injustificadas} injustificadas · ${s.justificadas} justificadas · ${s.disciplina} disciplina`);
